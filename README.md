@@ -23,6 +23,17 @@ decision = { mode, target, reason_code }
 | Product / cloud alignment | `docs/m1-three-tables-for-alignment.md` |
 | IT interface handoff | `docs/m1-local-control-interface-v0.1.md` |
 | Technical appendix | `docs/m1-bottom-up-interface-plan.md` |
+| Meeting context | `meeting-notes/2026-05-27-import-only-parameterization-summary.md` |
+
+## Repository Layout
+
+| Folder | Content |
+|---|---|
+| `docs/` | Current M1 handoff documents |
+| `work-notes/` | Earlier working notes and expert synthesis drafts |
+| `meeting-notes/` | Meeting summaries and alignment notes |
+| `source-materials/` | Original PPT/PDF/screenshot materials |
+| `references/` | Literature registry and source PDFs used in prior EV/BESS work |
 
 ## M1 Scope
 
@@ -42,6 +53,9 @@ M1 means:
 - Mode / target / reason_code output
 - Fallback and protect states
 - M1 test matrix
+- Meeting context and working notes
+- Original source PPT/PDF materials
+- Literature registry and source PDFs
 
 ## Excluded
 

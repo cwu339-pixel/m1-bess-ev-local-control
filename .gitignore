@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+*.log
+tmp/
+output/
+data/
+.playwright*/
+.pytest_cache/
+__pycache__/
+*.pyc

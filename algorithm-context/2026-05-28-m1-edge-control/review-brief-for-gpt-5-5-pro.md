@@ -4,6 +4,8 @@
 
 Please review the M1 local-control algorithm context and propose a cleaner v0.2 formula.
 
+Important: read `source-notes/ning-edge-control-strategy-draft-02.txt` and `source-notes/ning-edge-control-strategy-draft-02-update-note.md` before relying on draft 01. Ning indicated the earlier draft was wrong, and draft 02 changes the core price formula.
+
 The formula must stay narrow and implementable:
 
 ```text
@@ -72,6 +74,18 @@ if EV_gap = 0 and SOC <= soc_p25 and charge is allowed:
 ## Required v0.2 Improvement
 
 Add economic dispatch without making the edge algorithm complex.
+
+Use the draft 02 pattern:
+
+```text
+physical_cap -> utilization_ratio -> target_power
+```
+
+Avoid additive price bonuses that can exceed physical caps:
+
+```text
+physical_cap + price_bonus_kw
+```
 
 Cloud should provide:
 
@@ -153,4 +167,3 @@ Please propose:
 - Do not use export price in M1.
 - Do not require raw price tables on the edge.
 - Do not change the output contract unless necessary.
-

@@ -85,6 +85,8 @@ Ning's feedback:
 | `m1-formula-algorithm-v0.1.md` | Formula-focused draft before price-ranking integration. |
 | `m1-data-requirements-for-jin-v0.1.md` | Data-field request draft for IT / Jin. |
 | `notebooks/m1-mvp-local-algorithm-test.ipynb` | Runnable notebook implementing the current no-price v0.1 formula. |
+| `source-notes/ning-edge-control-strategy-draft-02.txt` | Latest Ning edge-control draft. Use this instead of draft 01 for formula review. |
+| `source-notes/ning-edge-control-strategy-draft-02-update-note.md` | Short note on what changed in draft 02 and why it matters for M1. |
 | `source-notes/ning-edge-control-strategy-draft-01.txt` | Ning's edge-control strategy draft, converted from docx. |
 | `source-notes/ning-edge-control-strategy-summary.md` | Summary of what can and cannot be reused from Ning's draft. |
 | `source-notes/control-logic-v0.3-ppt-extracted.md` | Extracted text from the earlier control-logic PPT. |
@@ -92,6 +94,8 @@ Ning's feedback:
 ## Current Missing Piece
 
 The next version should integrate price ranking into the M1 formula.
+
+Important update: Ning's draft 02 changes the price logic from an additive price-bonus term into a utilization-ratio term under the MIC headroom cap. Reviewers should read draft 02 before proposing M1 v0.2.
 
 Recommended price signal boundary:
 
@@ -112,4 +116,3 @@ export_sell_price
 ```
 
 because M1 has no export and no V2G.
-

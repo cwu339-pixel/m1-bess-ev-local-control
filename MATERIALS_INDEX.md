@@ -24,6 +24,8 @@ This repository collects both the current M1 handoff and the supporting material
 | `algorithm-context/2026-05-28-m1-edge-control/m1-data-requirements-for-jin-v0.1.md` | IT / Jin data-requirement draft |
 | `algorithm-context/2026-05-28-m1-edge-control/notebooks/m1-mvp-local-algorithm-test.ipynb` | Runnable notebook for current no-price v0.1 formula |
 | `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-summary.md` | Summary of Ning's edge-control draft and how it maps to M1 |
+| `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-draft-02.txt` | Latest Ning edge-control draft; supersedes draft 01 for formula review |
+| `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-draft-02-update-note.md` | Short note on the draft 02 correction |
 | `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-draft-01.txt` | Ning edge-control draft converted from docx |
 | `algorithm-context/2026-05-28-m1-edge-control/source-notes/control-logic-v0.3-ppt-extracted.md` | Extracted text from the control-logic PPT |
 

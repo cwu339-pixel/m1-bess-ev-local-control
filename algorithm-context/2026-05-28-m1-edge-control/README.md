@@ -81,6 +81,7 @@ Ning's feedback:
 | `review-brief-for-gpt-5-5-pro.md` | Start here. Contains the review task and current open questions. |
 | `meeting-summary-2026-05-28.md` | Plain-language meeting summary and latest decisions. |
 | `m1-four-control-loops-v0.1.md` | Plain-language explanation of the four control loops and current ownership boundary. |
+| `m1-model1-local-algorithm-v0.3.md` | Latest simplified Model 1 draft after Ning 18:00 feedback; narrows Model 1 to charge-side economic dispatch. |
 | `m1-local-algorithm-brief-v0.2.md` | Latest reviewed M1 formula draft with SOC bands, price ranks, physical caps, and post-slew EV limit. |
 | `m1-local-algorithm-brief-v0.1.md` | Current simple local-algorithm explanation with formulas and flow. |
 | `m1-x-fx-y-deliverable-v0.1.md` | Earlier x -> f(x) -> y handoff draft. |

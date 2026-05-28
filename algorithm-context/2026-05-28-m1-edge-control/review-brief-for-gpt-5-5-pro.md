@@ -6,13 +6,19 @@ Please review the M1 local-control algorithm context and propose a cleaner v0.2 
 
 Important: read `source-notes/ning-edge-control-strategy-draft-02.txt` and `source-notes/ning-edge-control-strategy-draft-02-update-note.md` before relying on draft 01. Ning indicated the earlier draft was wrong, and draft 02 changes the core price formula.
 
-Latest local draft to review:
+Latest simplified local draft to review first:
+
+```text
+m1-model1-local-algorithm-v0.3.md
+```
+
+More complete mathematical draft before the latest simplification:
 
 ```text
 m1-local-algorithm-brief-v0.2.md
 ```
 
-This draft has already incorporated two review passes on physical caps and algorithm interface. Please focus on remaining correctness and business-policy questions, not on v0.1.
+Use v0.3 for the current Model 1 direction. Use v0.2 only as background for the earlier, more symmetric charge/discharge formula.
 
 The formula must stay narrow and implementable:
 

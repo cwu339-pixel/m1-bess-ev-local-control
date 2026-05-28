@@ -50,6 +50,7 @@ L1 是否只做前置 gate 没说清。
 | 放电公式容易被误解为本版交付 | 从 Model 1 主文档删除，明确 Model 1 不输出放电 |
 | mode 优先级不明确 | 改成 `SAFE_PROTECT > EV_LIMIT > BESS_CHARGE > NORMAL` |
 | 用户需要能解释 | 新增 `2026-05-28-m1-model1-explainer-v0.3.md` 解说版 |
+| 公式来源不够显眼 | 新增“核心数学公式和来源”章节，把 L1 安全、MIC 余量、EV 优先、SOC band、price rank 如何推到输出写清楚 |
 
 ---
 

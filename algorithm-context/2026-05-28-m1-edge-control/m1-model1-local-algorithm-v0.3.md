@@ -192,9 +192,230 @@ site_import_headroom_kw
 
 ---
 
-## 4. 算法 f(X)
+## 4. 核心数学公式和来源
 
-### 4.1 先看 L1 是否允许执行
+这一节把 Model 1 的数学逻辑集中放在一起，方便解释“公式是怎么来的”。
+
+Model 1 的公式不是凭空来的，而是由三层约束叠出来的：
+
+| 来源 | 进入公式的方式 |
+|---|---|
+| L1 安全保护 | 给 `hard_gate_ok`、`data_fresh`、`p_bess_charge_cap_kw`，决定能不能执行、最多能充多少 |
+| 站点 import 限制 | 用 `mic_kw`、`mic_margin_ratio`、`site_base_load_kw` 算当前电网余量 |
+| L3 云端经济指导 | 用 `soc_p10/p25/p50/p75/p90` 和 `grid_buy_price_rank` 决定可用余量使用比例 |
+
+### 4.1 变量定义
+
+对每个 L2 tick，记作时间点 `t`：
+
+| 数学符号 | 文档字段 | 含义 |
+|---|---|---|
+| `H_t` | `site_import_headroom_kw` | 当前站点电网可用余量 |
+| `M_t` | `mic_kw` | 站点最大 import 上限 |
+| `L_t` | `site_base_load_kw` | 站点基础负荷，不含本轮 EV 请求和 BESS 目标 |
+| `m_t` | `mic_margin_ratio` | MIC 安全余量比例 |
+| `E_t` | `ev_request_kw` | 当前 EV pool 请求功率 |
+| `C_t` | `charge_physical_cap_kw` | EV 优先后，BESS 当前可主动充电上限 |
+| `B_t` | `band` | 当前 SOC 落在哪个 band |
+| `R_t` | `grid_buy_price_rank` | 买电价格 rank，0=便宜，1=贵 |
+| `u_t` | `charge_ratio` | 本轮可用充电上限的使用比例 |
+| `P_bess,t` | `p_bess_target_kw` | Model 1 输出的 BESS 目标功率 |
+| `P_ev_limit,t` | `p_ev_limit_kw` | Model 1 输出的 EV pool 总功率上限 |
+
+### 4.2 公式 1：L1 安全门
+
+```text
+if hard_gate_ok_t = false
+or data_fresh_t = false
+or cloud_packet_expired_t = true:
+
+    P_bess,t = 0
+    P_ev_limit,t = safe_ev_limit_kw
+    mode_t = SAFE_PROTECT
+```
+
+来源：
+
+```text
+L1 是硬保护。
+只要 L1 不允许，L2 的经济调度没有讨论空间。
+```
+
+### 4.3 公式 2：站点电网余量
+
+如果 IT 直接提供 `site_import_headroom_kw`：
+
+```text
+H_t = max(0, site_import_headroom_kw_t)
+```
+
+如果 IT 不直接提供，则由 MIC 计算：
+
+```text
+H_t = max(0, (M_t - L_t) × (1 - m_t))
+```
+
+对应字段：
+
+```text
+H_t = site_import_headroom_kw
+M_t = mic_kw
+L_t = site_base_load_kw
+m_t = mic_margin_ratio
+```
+
+来源：
+
+```text
+MIC 是站点最多能从电网拿多少。
+site_base_load 是已经被站点基础负荷占掉的部分。
+margin 是为了不顶到 MIC 留出来的安全余量。
+```
+
+### 4.4 公式 3：EV 优先后的 BESS 可充上限
+
+```text
+C_t = max(0, min(
+    H_t - E_t,
+    p_bess_charge_cap_kw_t
+))
+```
+
+对应字段：
+
+```text
+C_t = charge_physical_cap_kw
+H_t = site_import_headroom_kw
+E_t = ev_request_kw
+```
+
+来源：
+
+```text
+Model 1 默认 EV 优先。
+EV 当前请求先占用电网余量。
+剩下的余量才允许 BESS 主动充电。
+同时，BESS 充电不能超过 L1 给出的当前最大可充功率。
+```
+
+### 4.5 公式 4：SOC band 定位
+
+```text
+if   soc_t < soc_p10_t: B_t = 0
+elif soc_t < soc_p25_t: B_t = 1
+elif soc_t < soc_p50_t: B_t = 2
+elif soc_t < soc_p75_t: B_t = 3
+elif soc_t < soc_p90_t: B_t = 4
+else:                   B_t = 5
+```
+
+来源：
+
+```text
+云端给 SOC band 边界。
+本地只拿当前确定的 SOC 去判断它落在哪一档。
+SOC 越低，越倾向主动充电。
+SOC 越高，越不主动充电。
+```
+
+### 4.6 公式 5：SOC + 电价决定充电比例
+
+```text
+base_t = base_charge_ratio_by_soc_band[B_t]
+
+price_bonus_t =
+    cheap_price_bonus_ratio_by_soc_band[B_t] × (1 - R_t)
+
+u_t = clip(base_t + price_bonus_t, 0, 1)
+```
+
+两端 band 可以固定：
+
+```text
+if B_t = 0: u_t = 1
+if B_t = 5: u_t = 0
+```
+
+来源：
+
+```text
+这是 Ning draft 02 的核心思路：
+先算物理上限，再算使用比例。
+
+电价只影响比例 u_t。
+电价不会额外创造 kW。
+所以不会突破 MIC / BMS / PCS 的物理限制。
+```
+
+如果 `grid_buy_price_rank` 暂时缺失：
+
+```text
+R_t = 0.5
+```
+
+也就是用中性价格，不偏向“多充”也不偏向“少充”。
+
+### 4.7 公式 6：BESS 目标功率
+
+```text
+P_bess,t = C_t × u_t
+```
+
+最终执行前，L1 再限幅：
+
+```text
+P_bess,t = clamp(
+    P_bess,t,
+    0,
+    p_bess_charge_cap_kw_t
+)
+```
+
+来源：
+
+```text
+Model 1 只做充电侧调度。
+所以 P_bess,t 只能是正数或 0。
+不输出负数。
+```
+
+### 4.8 公式 7：EV pool 上限
+
+```text
+P_ev_limit,t = min(E_t, H_t)
+```
+
+来源：
+
+```text
+Model 1 不用 BESS 放电支援 EV。
+所以 EV pool 最多只能拿当前电网可用余量。
+如果 EV 请求小于余量，就满足 EV 请求。
+如果 EV 请求大于余量，就限制到余量。
+```
+
+### 4.9 最终输出
+
+```js
+Y_t = {
+  mode_t,
+  p_ev_limit_kw: P_ev_limit,t,
+  p_bess_target_kw: P_bess,t,
+  reason_code_t
+}
+```
+
+其中：
+
+```text
+p_bess_target_kw >= 0
+```
+
+---
+
+## 5. 算法步骤 f(X)
+
+### 5.1 先看 L1 是否允许执行
 
 ```text
 if hard_gate_ok == false or data_fresh == false or cloud packet expired:
@@ -209,7 +430,7 @@ if hard_gate_ok == false or data_fresh == false or cloud packet expired:
 安全不过，本地经济调度不参与争论，直接保守。
 ```
 
-### 4.2 计算站点可用电网余量
+### 5.2 计算站点可用电网余量
 
 如果 IT 直接给电网余量，优先直接用：
 
@@ -243,7 +464,7 @@ site_import_headroom_kw = max(0, mic_kw - mic_margin_kw - site_base_load_kw)
 
 两种方式二选一，不要同时用。
 
-### 4.3 EV 优先后的 BESS 可充上限
+### 5.3 EV 优先后的 BESS 可充上限
 
 ```text
 charge_physical_cap_kw = max(
@@ -270,7 +491,7 @@ EV 满载、没有剩余 headroom -> BESS 主动充电为 0
 EV 不满载、有剩余 headroom -> BESS 可以按经济策略充电
 ```
 
-### 4.4 定位 SOC band
+### 5.4 定位 SOC band
 
 ```text
 if   soc < soc_p10: band = 0
@@ -290,7 +511,7 @@ SOC 越低，越倾向充电。
 SOC 越高，越不倾向主动充电。
 ```
 
-### 4.5 根据 SOC band 和价格 rank 算充电比例
+### 5.5 根据 SOC band 和价格 rank 算充电比例
 
 定义：
 
@@ -323,7 +544,7 @@ if band == 5:
 价格不会额外创造 kW，也不能突破 MIC / L1 cap。
 ```
 
-### 4.6 计算 BESS 充电目标
+### 5.6 计算 BESS 充电目标
 
 ```text
 p_bess_charge_kw = charge_physical_cap_kw * charge_ratio
@@ -353,7 +574,7 @@ p_bess_target_kw = clamp(
 )
 ```
 
-### 4.7 计算 EV pool 上限
+### 5.7 计算 EV pool 上限
 
 ```text
 p_ev_limit_kw = min(
@@ -371,7 +592,7 @@ EV 最多拿到当前电网可用余量。
 
 ---
 
-## 5. 输出 Y
+## 6. 输出 Y
 
 输出固定保持四个字段：
 
@@ -391,7 +612,7 @@ Y_t = {
 | `p_bess_target_kw` | BESS 目标功率，Model 1 中正数充电、0 不动，不输出负数 |
 | `reason_code` | 当前主原因 |
 
-### 5.1 mode 判断
+### 6.1 mode 判断
 
 主状态优先级：
 
@@ -415,7 +636,7 @@ else:
     mode = NORMAL
 ```
 
-### 5.2 reason_code 判断
+### 6.2 reason_code 判断
 
 第一版 reason 只输出主原因：
 
@@ -444,9 +665,9 @@ SOC_LIMIT
 
 ---
 
-## 6. 流程图
+## 7. 流程图
 
-### 6.1 三层交互图
+### 7.1 三层交互图
 
 ```mermaid
 flowchart LR
@@ -455,7 +676,7 @@ flowchart LR
     L2 --> Y["Y_t<br/>mode<br/>p_ev_limit_kw<br/>p_bess_target_kw<br/>reason_code"]
 ```
 
-### 6.2 L2 本地计算图
+### 7.2 L2 本地计算图
 
 ```mermaid
 flowchart TD
@@ -471,7 +692,7 @@ flowchart TD
 
 ---
 
-## 7. 这版刻意不放进主公式的东西
+## 8. 这版刻意不放进主公式的东西
 
 | 暂不放进主公式 | 原因 |
 |---|---|
@@ -484,7 +705,7 @@ flowchart TD
 
 ---
 
-## 8. 需要继续确认的问题
+## 9. 需要继续确认的问题
 
 | 问题 | 当前建议 |
 |---|---|
@@ -497,7 +718,7 @@ flowchart TD
 
 ---
 
-## 9. 对外口径
+## 10. 对外口径
 
 可以这样说：
 

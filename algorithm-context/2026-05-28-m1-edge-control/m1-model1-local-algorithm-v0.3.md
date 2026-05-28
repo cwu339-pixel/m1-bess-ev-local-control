@@ -2,68 +2,35 @@
 
 日期：2026-05-28
 
-用途：根据 18:00 讨论，把 v0.2 进一步收窄成 Model 1 的简化版本。重点是先把三层架构、Model 1 范围、云端参数、本地输出讲清楚。
+一句话：
+
+> Model 1 先定义 BESS + EV、Import Only 场景下的本地充电侧调度：L3 云端给 SOC band、价格 rank 和参数，L1 给安全边界并最终限幅，L2 在这些边界内算出 EV 总功率上限和 BESS 目标功率。
 
 ---
 
-## 0. 这版为什么改
+## 0. 这版怎么来的
 
-v0.2 已经把电价、SOC band、Ning draft 02 的 `physical cap × utilization` 结构放进来了。
+这版不是重新发明一套大 EMS，而是把前几版收窄成一个能解释、能测试、能和 IT 对接口的版本。
 
-但 18:00 讨论后，需要进一步简化：
+主要吸收了三件事：
 
-```text
-不要把 L1 / L2 / L3 画成一条串行流程。
-它们应该是三个 layer，并行运行，通过优先级和 limit 交互。
+| 来源 | 吸收进 v0.3 的内容 |
+|---|---|
+| 原始 M1 规则算法 | 保留 `x -> f(x) -> y`，输出仍是四个字段 |
+| Ning 的边缘控制策略 draft 02 | 使用 `物理上限 × 使用比例`，避免价格逻辑突破 MIC / PCS 限制 |
+| 18:00 讨论 | L1 / L2 / L3 拆成三层；Model 1 先把充电侧经济调度讲清楚；放电先作为 EV 事件驱动聚合动作 |
 
-Model 1 先不要做完整放电经济调度。
-放电先理解为 EV 事件驱动的聚合动作，具体比例后续讨论。
-
-Model 1 先把充电侧经济调度做清楚。
-```
-
-所以 v0.3 的定位是：
+所以这版的核心不是“做一个粗糙 MVP”，而是：
 
 ```text
-Model 1 = BESS + EV + Import Only 的第一版本地经济调度模型
+范围要小，但公式要对。
 ```
 
 ---
 
-## 1. 三层架构
+## 1. Model 1 范围
 
-M1 本地控制先按三层理解：
-
-| Layer | 名称 | 做什么 | 责任 |
-|---|---|---|---|
-| L3 | 云端 advisory / model layer | 下发 model、SOC band、价格 rank、调参参数 | 云端 |
-| L2 | 本地协调 / 经济调度 layer | 在 L1 给出的边界内算本地目标 | 我们当前算法 |
-| L1 | hard gate / protection layer | MIC / BMS / PCS / SOC / 数据新鲜度硬保护 | 已有 EMS / BMS / PCS / MIC |
-
-关键关系：
-
-```text
-L1 不等 L2 跑完才工作。
-L3 不等 L2 跑完才工作。
-三个 layer 是并行存在的。
-```
-
-L1 优先级最高。L1 给 L2 的不是策略，而是：
-
-```text
-能不能动？
-最多能充多少？
-最多能放多少？
-数据是否可信？
-```
-
-L2 只能在 L1 给出的边界里跑。
-
----
-
-## 2. Model 1 范围
-
-当前只讨论 Model 1：
+当前只讨论：
 
 ```text
 model = M1_BESS_EV_IMPORT_ONLY
@@ -79,328 +46,384 @@ Import Only
 无 V2G
 ```
 
-Model 1 先解决：
+Model 1 当前要回答三个问题：
+
+1. EV pool 最多允许拿多少功率？
+2. BESS 当前应该充电、放电还是不动？
+3. 这个决策的主原因是什么？
+
+Model 1 当前不负责：
+
+| 不负责项 | 原因 |
+|---|---|
+| L1 安全保护 | MIC / BMS / PCS / SOC / 数据新鲜度保护已有或应由底层系统兜底 |
+| 每把枪功率分配 | 我们只输出站级 `p_ev_limit_kw`，每把枪怎么分由 IT / charger 侧做 |
+| 原始电价解析 | 云端负责把电价处理成 rank，本地不直接吃 tariff 表 |
+| export / V2G | M1 是 Import Only |
+| 完整放电经济调度 | Model 1 先不把放电做成和充电完全对称的价格优化 |
+
+---
+
+## 2. 三层关系
+
+L1 / L2 / L3 不要理解成一条串行流程，而是三个同时存在的 layer。
+
+| Layer | 人话解释 | 给谁用 | 粒度 |
+|---|---|---|---|
+| L3 云端 advisory / model layer | 云端提前算好今天/明天的目标和参数 | 给 L2 用 | D+1 计划，30 分钟时间片，每天更新 |
+| L2 本地协调 / 经济调度 layer | 本地每秒看现场情况，算本轮目标 | 我们当前算法 | 约 1 秒 |
+| L1 hard gate / protection layer | 硬保护，判断能不能动、最多能动多少 | 限制 L2 | 约 500 ms 或设备最快稳定周期 |
+
+关键关系：
 
 ```text
-什么时候给 BESS 充电？
-充多少？
-EV pool 总功率上限是多少？
+L3 给 L2：目标、SOC band、price rank、可调参数
+L1 给 L2：安全状态、功率上限、是否可执行
+L2 输出：p_ev_limit_kw、p_bess_target_kw、mode、reason_code
 ```
 
-Model 1 暂不解决：
+L1 优先级最高。L2 不能突破 L1 给出的上限。
+
+更准确地说：
 
 ```text
-完整放电经济调度
-卖电 / export
-V2G
-每把枪怎么分配功率
-PCS / BMS 底层协议
+L1 不只是前置检查。
+L1 也应该在 L2 输出之后做最终 clamp / reject。
 ```
 
-放电在 Model 1 里先按这个口径处理：
+也就是：
 
 ```text
-EV 到来是事件驱动。
-BESS 放电支援 EV / AC 聚合负荷，是功率聚合动作。
-第一版不把放电做成和充电完全对称的 price-rank 经济调度公式。
-后续再按 SOC band 讨论放电比例。
+L2 可以算目标，但最终执行前仍要被 L1 的 MIC / BMS / PCS / SOC 限制再检查一遍。
 ```
 
 ---
 
-## 3. L3 云端下发什么
+## 3. 输入 X
 
-L3 下发的是本地模型参数，不是底层硬件 command。
+M1 v0.3 的输入按三类整理。
 
-### 3.1 model
+### 3.1 X_L3：云端下发参数
 
-第一字段建议是：
+这部分是云端给本地的 guidance，不是硬件 command。
+
+| 字段 | 含义 | 粒度 | 是否必需 |
+|---|---|---|---|
+| `model` | 当前模式，Model 1 用 `M1_BESS_EV_IMPORT_ONLY` | 每次参数包 | 必需 |
+| `parameter_version` | 参数包版本，方便回滚和追踪 | 每次参数包 | 建议 |
+| `valid_from / valid_to` | 参数包有效期 | 每次参数包 | 必需 |
+| `mic_kw` | Maximum Import Capacity，站点允许从电网取电的上限 | 配置 / 云端更新 | 必需 |
+| `mic_margin_ratio` | MIC 预留比例，例如 0.05 表示预留 5% | 配置 / 云端更新 | 必需 |
+| `soc_p10/p25/p50/p75/p90` | 云端算出的 SOC band 边界 | 30 分钟时间片 | 必需 |
+| `grid_buy_price_rank` | 买电价格 rank，0=便宜，1=贵 | 30 分钟时间片 | 必需 |
+| `base_charge_ratio_by_soc_band` | 不看价格时，各 SOC band 的基础充电比例 | 参数表 | 必需 |
+| `cheap_price_bonus_ratio_by_soc_band` | 电价便宜时，各 SOC band 额外提高的充电比例 | 参数表 | 必需 |
+
+说明：
 
 ```text
-model = M1_BESS_EV_IMPORT_ONLY
+云端可能还有实际 EV 费用、实际用电成本、预期负荷、预期 EV 充电量、预期 SOC。
+这些可以用于复盘、展示和后续模型校验。
+但 Model 1 本地公式里，最关键的是 SOC band 和 price rank。
 ```
 
-后面如果有新的场景，再变成：
+如果 `grid_buy_price_rank` 临时缺失但 L3 参数包仍可用，可以用中性默认：
 
 ```text
-model = M2_...
-model = M3_...
+grid_buy_price_rank = 0.5
 ```
 
-这样本地知道当前运行的是哪套控制逻辑。
-
-### 3.2 MIC / import 参数
-
-`MIC` 可以来自本地配置，也可以由云端下发更新。
-
-原因是：
+如果 L3 参数包已经过期：
 
 ```text
-电网容量或站点 import 合约可能变化。
-如果 MIC 变化，需要能通过云端或配置更新到本地。
+valid_to < current_time -> DATA_STALE
 ```
 
-建议字段：
+如果短期云端只能给 `expected_soc`，可以先临时生成一个简化 band，但 v0.3 推荐目标接口直接使用：
 
 ```text
-MIC_kw
-margin
+soc_p10, soc_p25, soc_p50, soc_p75, soc_p90
+```
+
+### 3.2 X_L1：安全边界和设备能力
+
+这部分来自已有 EMS / BMS / PCS / MIC 保护环。
+
+| 字段 | 含义 | 粒度 | 是否必需 |
+|---|---|---|---|
+| `hard_gate_ok` | L1 是否允许 L2 下发新目标 | 约 500 ms 或最快稳定周期 | 必需 |
+| `data_fresh` | 关键数据是否新鲜 | 约 500 ms 或最快稳定周期 | 必需 |
+| `p_bess_charge_cap_kw` | 当前 BESS/PCS/BMS 允许的最大充电功率 | 实时 | 必需 |
+| `p_bess_discharge_cap_kw` | 当前 BESS/PCS/BMS 允许的最大放电功率 | 实时 | 必需 |
+| `safe_ev_limit_kw` | 安全异常时 EV pool 的保守上限 | 实时 / 配置 | 必需 |
+
+注意：
+
+```text
+L1 不是我们重写的保护算法。
+L1 只把“能不能动”和“最多能动多少”给 L2。
+```
+
+### 3.3 X_L2：本地实时状态
+
+这部分是现场每秒读到的状态。
+
+| 字段 | 含义 | 粒度 | 是否必需 |
+|---|---|---|---|
+| `soc` | BESS 当前 SOC，来自 BMS 的确定值 | 约 1 秒 | 必需 |
+| `site_base_load_kw` | 站点当前基础负荷，不含本轮 EV 请求，也不含本轮 BESS 目标 | 约 1 秒 | 必需 |
+| `site_import_headroom_kw` | 当前电网剩余可用功率，如果 IT 能直接给，可以直接替代 MIC 计算 | 约 1 秒 | 建议 |
+| `ev_request_kw` | EV pool 当前请求功率 | 约 1 秒 | 必需 |
+| `prev_p_bess_target_kw` | 上一轮 BESS 目标功率 | 约 1 秒 | 建议 |
+
+`site_base_load_kw` 的口径必须和 IT 确认：
+
+```text
+不能把 EV_request_kw 已经包含在 site_base_load_kw 里，又在公式里再扣一次 EV_request_kw。
+否则会双重扣减 EV。
+```
+
+如果站点计量口径复杂，推荐让 IT 直接给：
+
+```text
+site_import_headroom_kw
+```
+
+这样 L2 就不用自己判断 `site_load` 是否包含 EV / BESS。
+
+---
+
+## 4. 算法 f(X)
+
+### 4.1 先看 L1 是否允许执行
+
+```text
+if hard_gate_ok == false or data_fresh == false or cloud packet expired:
+    mode = SAFE_PROTECT
+    p_ev_limit_kw = safe_ev_limit_kw
+    p_bess_target_kw = 0
+```
+
+这一步的人话是：
+
+```text
+安全不过，本地经济调度不参与争论，直接保守。
+```
+
+### 4.2 计算站点可用电网余量
+
+如果 IT 直接给电网余量，优先直接用：
+
+```text
+site_import_headroom_kw = max(0, IT_provided_site_import_headroom_kw)
+```
+
+如果 IT 不直接给余量，则本地可用下面公式计算：
+
+```text
+site_import_headroom_kw = max(
+    0,
+    (mic_kw - site_base_load_kw) * (1 - mic_margin_ratio)
+)
+```
+
+人话：
+
+```text
+MIC 是电网最多让站点拿多少电。
+site_base_load 是站点基础负荷已经用了多少。
+margin 是安全余量。
+扣完以后，剩下的就是 EV + BESS 可以共享的电网余量。
+```
+
+如果使用 kW 余量写法，也可以等价写成：
+
+```text
+site_import_headroom_kw = max(0, mic_kw - mic_margin_kw - site_base_load_kw)
+```
+
+两种方式二选一，不要同时用。
+
+### 4.3 EV 优先后的 BESS 可充上限
+
+```text
+charge_physical_cap_kw = max(
+    0,
+    min(
+        site_import_headroom_kw - ev_request_kw,
+        p_bess_charge_cap_kw
+    )
+)
+```
+
+人话：
+
+```text
+Model 1 默认 EV 优先。
+EV 当前请求先占用 headroom。
+剩下的 headroom 才允许 BESS 主动充电。
+```
+
+所以：
+
+```text
+EV 满载、没有剩余 headroom -> BESS 主动充电为 0
+EV 不满载、有剩余 headroom -> BESS 可以按经济策略充电
+```
+
+### 4.4 定位 SOC band
+
+```text
+if   soc < soc_p10: band = 0
+elif soc < soc_p25: band = 1
+elif soc < soc_p50: band = 2
+elif soc < soc_p75: band = 3
+elif soc < soc_p90: band = 4
+else:               band = 5
+```
+
+人话：
+
+```text
+SOC band 不是安全边界。
+它是云端根据预测给本地的运行区间。
+SOC 越低，越倾向充电。
+SOC 越高，越不倾向主动充电。
+```
+
+### 4.5 根据 SOC band 和价格 rank 算充电比例
+
+定义：
+
+```text
+base = base_charge_ratio_by_soc_band[band]
+price_bonus = cheap_price_bonus_ratio_by_soc_band[band] * (1 - grid_buy_price_rank)
+charge_ratio = clip(base + price_bonus, 0, 1)
 ```
 
 其中：
 
 ```text
-margin 是比例，例如 0.05 或 0.10
+grid_buy_price_rank = 0  -> 买电便宜 -> price_bonus 最大
+grid_buy_price_rank = 1  -> 买电贵   -> price_bonus 为 0
 ```
 
-具体默认值需要 Ning / IT 确认。
-
-### 3.3 SOC band
-
-当前 SOC 是 BMS 给出的确定值。
-
-SOC band 是云端 probability forecast / model 算出来的边界：
-
-```text
-soc_p10
-soc_p25
-soc_p50
-soc_p75
-soc_p90
-```
-
-本地用当前确定的 `SOC` 去定位它落在哪个 band。
-
-### 3.4 价格 rank
-
-本地不吃原始电价。
-
-云端把价格处理成 rank：
-
-```text
-buy_rank_t
-```
-
-含义：
-
-```text
-0 = 当前买电便宜
-1 = 当前买电贵
-```
-
-Model 1 先把价格用于 BESS 充电决策。
-
-放电侧的 `spread_rank_t` 暂时不放进 Model 1 主公式，先作为后续讨论项。
-
-### 3.5 充电调参参数
-
-Model 1 先只保留充电侧参数：
-
-```text
-f1_chg[band]
-g_chg[band]
-beta_max_chg_kw
-slew_kw
-```
-
-含义：
-
-| 参数 | 含义 |
-|---|---|
-| `f1_chg[band]` | 基础充电利用率，不看价格 |
-| `g_chg[band]` | 价格奖励系数，便宜时多用一点 headroom |
-| `beta_max_chg_kw` | BESS / PCS 充电硬上限 |
-| `slew_kw` | BESS 目标功率变化速度限制 |
-
-具体数值先不在本文定死。
-
----
-
-## 4. L1 给 L2 什么
-
-L1 是 hard gate，不由 Model 1 重写。
-
-L1 给 L2 的最小结果：
-
-```text
-hard_gate_ok
-data_fresh
-site_safe
-bess_charge_limit_kw
-bess_discharge_limit_kw
-safe_ev_limit_kw
-```
-
-如果 L1 不通过：
-
-```text
-mode = SAFE_PROTECT
-p_bess_target_kw = 0
-p_ev_limit_kw = safe_ev_limit_kw
-```
-
-如果 L1 通过，L2 才运行 Model 1。
-
----
-
-## 5. L2 本地实时输入
-
-L2 每个 tick 读取：
-
-```text
-SOC
-site_load
-EV_request
-prev_p_bess_kw
-```
-
-说明：
-
-```text
-SOC 是 BMS 当前确定值
-site_load 是站点 AC 聚合负荷
-EV_request 是 EV pool 当前请求功率
-prev_p_bess_kw 是上一周期 BESS 实际目标或反馈
-```
-
-`site_load` 是否需要 EMA 平滑，是实现细节。它可以放在 L2 implementation 中，但不是 Model 1 第一版的核心经济参数。
-
----
-
-## 6. Model 1 核心公式
-
-### 6.1 电网 headroom
-
-```text
-H_t = max(0, (MIC_t - site_load_t) × (1 - margin_t))
-```
-
-如果 IT 已经提供 kW 余量，也可以改成：
-
-```text
-H_t = max(0, MIC_t - MIC_margin_kw_t - site_load_t)
-```
-
-两种方式二选一。
-
-### 6.2 EV 优先后的 BESS 可充上限
-
-```text
-alpha_chg_t = max(0, min(
-    H_t - EV_request_t,
-    bess_charge_limit_kw,
-    beta_max_chg_kw
-))
-```
-
-含义：
-
-```text
-先满足 EV 当前请求。
-剩余 headroom 才给 BESS 主动充电。
-```
-
-所以 Model 1 当前默认：
-
-```text
-EV 优先
-BESS 不抢 EV 的电
-```
-
-如果 SOC 极低时要让 BESS 抢一部分 EV headroom，需要 Ning 单独确认。
-
-### 6.3 SOC band
-
-```text
-if   SOC < soc_p10: band = 0
-elif SOC < soc_p25: band = 1
-elif SOC < soc_p50: band = 2
-elif SOC < soc_p75: band = 3
-elif SOC < soc_p90: band = 4
-else:               band = 5
-```
-
-### 6.4 充电使用比例
+两端 band 可以固定处理：
 
 ```text
 if band == 0:
-    u_chg = 1.0
-elif band == 5:
-    u_chg = 0
-else:
-    u_chg = f1_chg[band] + g_chg[band] × (1 - buy_rank_t)
-    u_chg = min(u_chg, 1.0)
+    charge_ratio = 1
+if band == 5:
+    charge_ratio = 0
 ```
 
-关键点：
+这一步最重要的原则是：
 
 ```text
-价格只影响使用比例。
-价格不会额外增加 kW。
+价格只改变“可用余量用多少比例”。
+价格不会额外创造 kW，也不能突破 MIC / L1 cap。
 ```
 
-### 6.5 BESS 充电目标
+### 4.6 计算 BESS 充电目标
 
 ```text
-P_chg_t = alpha_chg_t × u_chg_t
-
-p_bess_target_kw_t = clip(
-    P_chg_t,
-    prev_p_bess_kw - slew_kw,
-    prev_p_bess_kw + slew_kw
-)
-
-p_bess_target_kw_t = min(
-    p_bess_target_kw_t,
-    alpha_chg_t
-)
+p_bess_charge_kw = charge_physical_cap_kw * charge_ratio
 ```
 
-在 Model 1 的充电经济调度里：
+如果本轮只做充电侧经济调度：
 
 ```text
-p_bess_target_kw_t >= 0
+p_bess_target_kw = p_bess_charge_kw
 ```
 
-如果后续加入 EV 事件驱动放电，则负数放电由放电/聚合模块单独定义。
+约定：
 
----
+```text
+p_bess_target_kw > 0  表示 BESS 充电
+p_bess_target_kw = 0  表示 BESS 不动
+p_bess_target_kw < 0  预留给事件驱动放电
+```
 
-## 7. 放电暂时怎么处理
+### 4.7 EV 事件驱动放电占位
 
-Model 1 先不做完整放电经济调度。
+Model 1 v0.3 不把放电做成完整价格优化。
 
 当前口径：
 
 ```text
-EV 来了以后，BESS 放电支援是事件驱动的聚合动作。
-不是 Model 1 的 price-rank 经济调度动作。
+EV 来了以后，如果站点需要 BESS 支援，这是事件驱动的功率聚合动作。
+它后续可以按 SOC band 给一个放电比例表。
 ```
 
-后续需要单独讨论：
+占位公式可以写成：
 
 ```text
-不同 SOC band 下，BESS 给 EV / AC 聚合负荷支援多少比例？
-PCS 要求多少功率？
-是否由功率聚合环直接给 L2 一个 discharge request？
+ev_gap_kw = max(0, ev_request_kw - site_import_headroom_kw)
+
+p_bess_discharge_event_kw = min(
+    ev_gap_kw,
+    p_bess_discharge_cap_kw
+) * discharge_ratio_by_band[band]
 ```
 
-可以预留一个后续形式：
+但 `discharge_ratio_by_band` 这一版不定死，需要后续和 Ning / IT 单独确认。
+
+因此在 Model 1 v0.3 交付里：
 
 ```text
-P_dis_event_t = min(
-    EV_gap_t,
-    bess_discharge_limit_kw
-) × r_dis_by_soc_band[band]
+discharge_ratio_by_band = future parameter
+p_bess_discharge_event_kw = not implemented unless separately enabled
 ```
 
-但 `r_dis_by_soc_band` 这一版不定死。
+如果暂时不启用事件驱动放电：
+
+```text
+p_bess_discharge_event_kw = 0
+```
+
+最终 signed target 可以统一写成：
+
+```text
+p_bess_target_kw = p_bess_charge_kw - p_bess_discharge_event_kw
+```
+
+最终执行前，L1 仍要再做一次限幅：
+
+```text
+p_bess_target_kw = clamp(
+    p_bess_target_kw,
+    -p_bess_discharge_cap_kw,
+    p_bess_charge_cap_kw
+)
+```
+
+### 4.8 计算 EV pool 上限
+
+```text
+p_ev_limit_kw = min(
+    ev_request_kw,
+    site_import_headroom_kw + p_bess_discharge_event_kw
+)
+```
+
+人话：
+
+```text
+EV 最多拿到：
+电网当前可用余量 + BESS 事件驱动支援功率。
+```
+
+如果没有启用事件驱动放电，就是：
+
+```text
+p_ev_limit_kw = min(ev_request_kw, site_import_headroom_kw)
+```
 
 ---
 
-## 8. 输出 Y_t
+## 5. 输出 Y
 
-输出仍保持四个字段：
+输出固定保持四个字段：
 
 ```js
 Y_t = {
@@ -411,83 +434,129 @@ Y_t = {
 }
 ```
 
-字段含义：
-
 | 字段 | 含义 |
 |---|---|
 | `mode` | 当前策略状态 |
-| `p_ev_limit_kw` | EV pool 总功率上限 |
-| `p_bess_target_kw` | BESS 目标功率，Model 1 充电侧为正数或 0 |
+| `p_ev_limit_kw` | EV pool 最大允许功率，也就是 `P_gun_pool_max` |
+| `p_bess_target_kw` | BESS 目标功率，正数充电、负数放电、0 不动 |
 | `reason_code` | 当前主原因 |
 
-`p_ev_limit_kw` 仍然是：
+### 5.1 mode 判断
+
+主状态优先级：
 
 ```text
-P_gun_pool_max
+SAFE_PROTECT > EV_LIMIT > BESS_SUPPORT > BESS_CHARGE > NORMAL
 ```
 
-每把枪怎么分，不在 Model 1 里做。
+同一个 tick 里，事件驱动放电支援优先于主动经济充电。
+如果 EV 仍然拿不到请求功率，主状态显示 `EV_LIMIT`。
+
+```text
+if hard_gate_ok == false or data_fresh == false or cloud packet expired:
+    mode = SAFE_PROTECT
+
+elif p_ev_limit_kw < ev_request_kw:
+    mode = EV_LIMIT
+
+elif p_bess_target_kw < 0:
+    mode = BESS_SUPPORT
+
+elif p_bess_target_kw > 0:
+    mode = BESS_CHARGE
+
+else:
+    mode = NORMAL
+```
+
+### 5.2 reason_code 判断
+
+第一版 reason 只输出主原因：
+
+```text
+if hard_gate_ok == false:
+    reason_code = BESS_FAULT
+elif data_fresh == false:
+    reason_code = DATA_STALE
+elif cloud packet expired:
+    reason_code = DATA_STALE
+elif p_ev_limit_kw < ev_request_kw:
+    reason_code = MIC_LIMIT
+elif p_bess_target_kw < 0:
+    reason_code = EV_DEMAND_HIGH
+elif band == 0 or band == 1:
+    reason_code = SOC_LOW
+else:
+    reason_code = NORMAL
+```
+
+如果 L1 能提供更细的错误来源，后续可以把 `BESS_FAULT` 拆成：
+
+```text
+PCS_LIMIT
+BMS_LIMIT
+SOC_LIMIT
+```
 
 ---
 
-## 9. 这版相对 v0.2 删掉了什么
+## 6. 流程图
 
-为了和 Model 1 对齐，v0.3 暂时拿掉：
+### 6.1 三层交互图
 
-```text
-f1_dis / g_dis
-beta_max_dis_kw 作为经济调度参数
-spread_rank_t 作为主公式输入
-完整对称放电公式
-EV_gap hysteresis 作为主模型参数
-site_load EMA 作为主模型参数
-allow_buy_grid
+```mermaid
+flowchart LR
+    L3["L3 云端<br/>model / SOC band / price rank / 参数"] --> L2["L2 本地协调算法<br/>每秒计算 Y"]
+    L1["L1 硬保护<br/>MIC / BMS / PCS / 数据新鲜度"] --> L2
+    L2 --> Y["Y_t<br/>mode<br/>p_ev_limit_kw<br/>p_bess_target_kw<br/>reason_code"]
 ```
 
-这些不是永远不要，而是：
+### 6.2 L2 本地计算图
 
-```text
-先不放进 Model 1 主公式。
-等 Ning / IT 确认后，再逐步加。
+```mermaid
+flowchart TD
+    A["读取 L3 参数 + L1 边界 + 本地实时状态"] --> B{"L1 是否允许执行?"}
+    B -- "否" --> P["SAFE_PROTECT<br/>p_ev_limit_kw = safe_ev_limit_kw<br/>p_bess_target_kw = 0"]
+    B -- "是" --> C["算 site_import_headroom_kw"]
+    C --> D["EV 优先后<br/>算 charge_physical_cap_kw"]
+    D --> E["用 soc 定位 band"]
+    E --> F["用 band + grid_buy_price_rank<br/>算 charge_ratio"]
+    F --> G["p_bess_charge_kw = cap × ratio"]
+    G --> H["可选：EV 事件驱动放电占位"]
+    H --> I["输出 Y_t"]
 ```
 
 ---
 
-## 10. 待确认问题
+## 7. 这版刻意不放进主公式的东西
 
-1. **Model 1 是否只做充电侧经济调度？**
-
-当前 v0.3 按“是”处理。
-
-2. **EV 事件驱动放电比例怎么定？**
-
-是否按 SOC band 给一个比例表：
-
-```text
-r_dis_by_soc_band[band]
-```
-
-3. **MIC 是云端下发还是本地配置？**
-
-建议都支持，但要明确主口径。
-
-4. **margin 默认值是多少？**
-
-讨论中提到可能不是 0.10，需要 Ning 确认。
-
-5. **f1_chg / g_chg 的默认值谁定？**
-
-当前不使用临时数字作为最终值。
-
-6. **site_load 平滑和 EV_gap 迟滞是否放到 implementation detail？**
-
-当前 v0.3 把它们从主模型里拿掉，只保留为后续实现优化。
+| 暂不放进主公式 | 原因 |
+|---|---|
+| 原始电价表 | 本地只吃云端处理后的 rank |
+| export sell price | M1 无 export |
+| 完整放电经济调度 | 18:00 讨论后，先作为 EV 事件驱动聚合动作 |
+| 每把枪分配 | 我们只输出 `P_gun_pool_max` |
+| site load EMA / EV gap hysteresis | 属于实现抗抖细节，不作为 v0.3 主模型口径 |
+| `allow_buy_grid` | 用 `model` 表示场景，不再单独放一个容易混淆的开关 |
 
 ---
 
-## 11. 对外口径
+## 8. 需要继续确认的问题
+
+| 问题 | 当前建议 |
+|---|---|
+| MIC 是云端下发还是本地配置？ | 两种都支持，但要选一个主口径 |
+| `mic_margin_ratio` 默认值是多少？ | 先不要写死，等 Ning / IT 定 |
+| SOC band 是否能直接由云端模型输出？ | 目标接口按 band 设计；短期可用 expected SOC 临时转换 |
+| `base_charge_ratio_by_soc_band` / `cheap_price_bonus_ratio_by_soc_band` 谁定？ | 云端 / Ning 调参，L2 只消费 |
+| 放电事件驱动比例怎么定？ | 后续单独定义 `discharge_ratio_by_band` |
+| IT 最终订阅 signed target 还是拆分充/放电字段？ | 当前主输出先用 signed `p_bess_target_kw` |
+| `site_base_load_kw` 口径怎么定？ | 必须确认是否排除 EV / BESS；否则优先让 IT 给 `site_import_headroom_kw` |
+
+---
+
+## 9. 对外口径
 
 可以这样说：
 
-> 这版 v0.3 是在 v0.2 基础上进一步收窄后的 Model 1。我们把 L1 / L2 / L3 拆成三个 layer，L1 负责 hard gate，L3 下发 model、SOC band、price rank 和参数，L2 只在 L1 给出的边界内运行本地经济调度。Model 1 先只把 BESS 主动充电侧做清楚：先算 EV 优先后的物理 headroom，再根据 SOC band 和 buy_rank 算使用比例，最后得到 BESS 充电目标。放电暂时不做完整经济调度，先作为 EV 事件驱动的聚合动作，后续再按 SOC band 商量比例。
-
+> Model 1 v0.3 先定义 Import Only、BESS + EV 场景下的本地充电侧调度：L3 下发模型参数和价格/SOC 指导，L1 提供硬保护边界并最终限幅，L2 在这些边界内计算 EV pool limit 和 BESS 充电目标；放电支援 EV 先作为事件驱动能力预留，不进入本版经济调度公式。

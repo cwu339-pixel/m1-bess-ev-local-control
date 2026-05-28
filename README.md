@@ -9,11 +9,11 @@ This repository defines the interface contract between cloud planning, local EMS
 ## Core Idea
 
 ```text
-cloud half-hour parameter packet + local realtime state
+L3 cloud parameter packet + L1 safety limits + L2 local realtime state
         ↓
-hard constraints filter infeasible actions
+local formula inside safety boundaries
         ↓
-decision = { mode, target, reason_code }
+Y_t = { mode, p_ev_limit_kw, p_bess_target_kw, reason_code }
 ```
 
 ## Read This First
@@ -21,6 +21,8 @@ decision = { mode, target, reason_code }
 | Audience | Document |
 |---|---|
 | Latest algorithm review context | `algorithm-context/2026-05-28-m1-edge-control/README.md` |
+| Plain-language v0.3 explanation | `algorithm-context/2026-05-28-m1-edge-control/m1-model1-explainer-v0.3.md` |
+| Current v0.3 formula | `algorithm-context/2026-05-28-m1-edge-control/m1-model1-local-algorithm-v0.3.md` |
 | Product / cloud alignment | `docs/m1-three-tables-for-alignment.md` |
 | IT interface handoff | `docs/m1-local-control-interface-v0.1.md` |
 | Technical appendix | `docs/m1-bottom-up-interface-plan.md` |
@@ -64,16 +66,17 @@ M1 means:
 - PV dispatch
 - Export / sell-back
 - V2G
-- Full economic optimization
-- Final kW-level dispatch
+- Full EMS optimization
+- Per-gun EV allocation
 - LLM in realtime control
 
 ## Decision Contract
 
 ```text
-decision = {
+Y_t = {
   mode,
-  target,
+  p_ev_limit_kw,
+  p_bess_target_kw,
   reason_code
 }
 ```
@@ -81,20 +84,20 @@ decision = {
 Output modes:
 
 ```text
-BESS_CHARGE_TO_SOC
-BESS_DISCHARGE_TO_EV
-BESS_HOLD
+NORMAL
+BESS_SUPPORT
 EV_LIMIT
+BESS_CHARGE
 SAFE_PROTECT
-SAFE_FALLBACK
 ```
 
 Example:
 
 ```text
-mode = BESS_DISCHARGE_TO_EV
-target = medium
-reason_code = EV_DEMAND_HIGH
+mode = BESS_CHARGE
+p_ev_limit_kw = 120
+p_bess_target_kw = 30
+reason_code = SOC_LOW
 ```
 
 ## Validation

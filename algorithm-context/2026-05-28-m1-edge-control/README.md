@@ -6,7 +6,7 @@ This folder collects the latest M1 local-control algorithm context for review.
 
 ## One-Sentence Goal
 
-Define a small but correct M1 local economic-dispatch formula for:
+Define a small but correct M1 local charge-side scheduling formula for:
 
 ```text
 BESS + EV
@@ -23,7 +23,7 @@ The goal is not a broad product MVP. The scope is narrow, but the formula and in
 We own the local economic-dispatch layer:
 
 ```text
-SOC band + price signal + MIC headroom + EV/AC aggregate load
+SOC band + price signal + site import headroom + EV request + L1 limits
         -> p_ev_limit_kw + p_bess_target_kw
 ```
 
@@ -78,10 +78,12 @@ Ning's feedback:
 
 | File | Purpose |
 |---|---|
-| `review-brief-for-gpt-5-5-pro.md` | Start here. Contains the review task and current open questions. |
+| `m1-model1-explainer-v0.3.md` | Start here if you need the plain-language explanation and meeting Q&A. |
+| `m1-model1-local-algorithm-v0.3.md` | Latest regenerated Model 1 draft after expert review; charge-side scheduling, L1 final clamp, clear input/output. |
+| `m1-model1-v0.3-expert-review.md` | Expert review summary and changes absorbed into v0.3. |
+| `review-brief-for-gpt-5-5-pro.md` | Review brief for external model review; use after reading the three v0.3 files above. |
 | `meeting-summary-2026-05-28.md` | Plain-language meeting summary and latest decisions. |
 | `m1-four-control-loops-v0.1.md` | Plain-language explanation of the four control loops and current ownership boundary. |
-| `m1-model1-local-algorithm-v0.3.md` | Latest simplified Model 1 draft after Ning 18:00 feedback; narrows Model 1 to charge-side economic dispatch. |
 | `m1-local-algorithm-brief-v0.2.md` | Latest reviewed M1 formula draft with SOC bands, price ranks, physical caps, and post-slew EV limit. |
 | `m1-local-algorithm-brief-v0.1.md` | Current simple local-algorithm explanation with formulas and flow. |
 | `m1-x-fx-y-deliverable-v0.1.md` | Earlier x -> f(x) -> y handoff draft. |
@@ -94,22 +96,22 @@ Ning's feedback:
 | `source-notes/ning-edge-control-strategy-summary.md` | Summary of what can and cannot be reused from Ning's draft. |
 | `source-notes/control-logic-v0.3-ppt-extracted.md` | Extracted text from the earlier control-logic PPT. |
 
-## Current Missing Piece
+## Current Open Questions
 
-The next version should integrate price ranking into the M1 formula.
-
-Important update: Ning's draft 02 changes the price logic from an additive price-bonus term into a utilization-ratio term under the MIC headroom cap. Reviewers should read draft 02 before proposing M1 v0.2.
-
-Recommended price signal boundary:
+Price ranking has now been integrated into the regenerated v0.3 formula through:
 
 ```text
-Cloud computes:
-  grid_buy_price_rank_t
-  ev_charge_price_rank_t
-  spread_rank_t
+physical_cap -> utilization_ratio -> target_power
+```
 
-Edge consumes those ranks.
-Edge does not calculate raw tariffs.
+The remaining questions are:
+
+```text
+- Can IT provide site_import_headroom_kw directly?
+- What default mic_margin_ratio should be used?
+- Can cloud output soc_p10/p25/p50/p75/p90 directly?
+- What initial base_charge_ratio_by_soc_band and cheap_price_bonus_ratio_by_soc_band should be used?
+- Should EV event-driven BESS discharge be enabled in Model 1, and if yes, what discharge_ratio_by_band should apply?
 ```
 
 M1 currently excludes:

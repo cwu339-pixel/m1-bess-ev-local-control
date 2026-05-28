@@ -19,7 +19,9 @@ This repository collects both the current M1 handoff and the supporting material
 |---|---|
 | `algorithm-context/2026-05-28-m1-edge-control/meeting-summary-2026-05-28.md` | Meeting summary and latest decision boundary |
 | `algorithm-context/2026-05-28-m1-edge-control/m1-four-control-loops-v0.1.md` | Four-loop explanation: L1 protection, power aggregation, economic dispatch, gun/module allocation |
-| `algorithm-context/2026-05-28-m1-edge-control/m1-model1-local-algorithm-v0.3.md` | Latest simplified Model 1 draft after Ning 18:00 feedback |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-model1-explainer-v0.3.md` | Plain-language v0.3 explanation and meeting Q&A |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-model1-local-algorithm-v0.3.md` | Latest regenerated Model 1 draft after expert review |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-model1-v0.3-expert-review.md` | Expert review summary and changes absorbed into v0.3 |
 | `algorithm-context/2026-05-28-m1-edge-control/m1-local-algorithm-brief-v0.2.md` | Latest reviewed M1 local algorithm draft with price ranks and physical-cap fixes |
 | `algorithm-context/2026-05-28-m1-edge-control/m1-local-algorithm-brief-v0.1.md` | Current local-algorithm explanation with formulas and flow |
 | `algorithm-context/2026-05-28-m1-edge-control/m1-formula-algorithm-v0.1.md` | Formula-focused draft before price-ranking integration |

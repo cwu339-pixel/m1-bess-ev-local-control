@@ -20,6 +20,7 @@ decision = { mode, target, reason_code }
 
 | Audience | Document |
 |---|---|
+| Latest algorithm review context | `algorithm-context/2026-05-28-m1-edge-control/README.md` |
 | Product / cloud alignment | `docs/m1-three-tables-for-alignment.md` |
 | IT interface handoff | `docs/m1-local-control-interface-v0.1.md` |
 | Technical appendix | `docs/m1-bottom-up-interface-plan.md` |
@@ -30,6 +31,7 @@ decision = { mode, target, reason_code }
 | Folder | Content |
 |---|---|
 | `docs/` | Current M1 handoff documents |
+| `algorithm-context/` | Latest algorithm-debugging context, review briefs, and notebooks |
 | `work-notes/` | Earlier working notes and expert synthesis drafts |
 | `meeting-notes/` | Meeting summaries and alignment notes |
 | `source-materials/` | Original PPT/PDF/screenshot materials |

@@ -90,10 +90,31 @@ M1 不下发 `export_sell_price`，因为 M1 无 export 无 V2G。
 | `g_dis[band]` | [0, 1] | 各 band 放电价格奖励系数 |
 | `allow_buy_grid` | boolean | 是否允许从电网主动给 BESS 充电 |
 | `slew_kw` | kW/tick | 每个控制周期内 BESS 功率最大变化量 |
+| `ev_gap_hysteresis_kw` | kW | EV gap 迟滞带，默认 2 kW |
+| `siteload_ema_alpha` | [0, 1] | site load 平滑系数，默认 0.3 |
 | `beta_max_chg_kw` | kW | BESS 充电硬件上限（来自电池/逆变器寿命）|
 | `beta_max_dis_kw` | kW | BESS 放电硬件上限 |
 
 **参数硬约束**：必须 `f1[band] + g[band] ≤ 1`，保证 `u ≤ 1`。云端发布前校验，边缘也做 `u = min(u, 1.0)` 防御。
+
+SOC band 参数数组按 6 个 slot 对齐：
+
+```json
+{
+  "f1_chg": [null, 0.4, 0.3, 0.2, 0.1, null],
+  "g_chg":  [null, 0.6, 0.5, 0.4, 0.3, null],
+  "f1_dis": [null, null, 0.2, 0.3, 0.5, null],
+  "g_dis":  [null, null, 0.3, 0.4, 0.5, null]
+}
+```
+
+其中：
+
+```text
+band 0 充电固定 u_chg = 1，放电固定 u_dis = 0
+band 5 充电固定 u_chg = 0，放电固定 u_dis = 1
+band 1~4 才读取 f1 / g
+```
 
 manifest fallback：
 
@@ -120,12 +141,14 @@ spread_rank_t = 0.5
 
 ```text
 MIC
-site_load          站内 AC 聚合负荷，不含 EV，不含 BESS 充放电
+site_load_raw      站内 AC 聚合负荷原始读数，不含 EV，不含 BESS 充放电
+site_load_smooth   站内 AC 聚合负荷平滑值，可由边缘维护
 EV_request         当前 EV pool 请求功率
 SOC                当前 BESS SOC
 battery_capacity_kwh
 delta_t_seconds    本地决策周期
 prev_p_bess_kw     上一周期 BESS 实际功率（边缘内存维护）
+prev_bess_direction 上一周期方向：charge / discharge / hold
 ```
 
 如果 IT 只能提供 `MIC_margin_kw` 而不是比例 `margin`，可以走 kW reserve 版本；但同一版公式里不要同时混用 `margin` 和 `MIC_margin_kw`。
@@ -192,6 +215,16 @@ DATA_STALE
 price_reason = PRICE_LOW_OPPORTUNITY / PRICE_HIGH_HOLD
 ```
 
+`p_bess_target_kw` 是 IT / PCS 侧消费的正式 signed 目标功率：
+
+```text
+p_bess_target_kw > 0   BESS 充电
+p_bess_target_kw < 0   BESS 放电
+p_bess_target_kw = 0   BESS 不动
+```
+
+文档里的 `p_bess_charge_cmd_kw` / `p_bess_discharge_cmd_kw` 只是同一个 signed 值拆出来用于 mode 和 EV limit 计算，不是额外输出字段。
+
 ---
 
 ## 4. 流程图
@@ -217,10 +250,26 @@ flowchart TD
 
 ## 5. 数学公式
 
-### 5.1 电网可用功率（v0.1 已有，公式微调）
+### 5.1 site load 平滑（v0.2 新增）
 
 ```text
-H_t = max(0, (MIC_t - site_load_t) × (1 - margin_t))
+site_load_smooth_t =
+    siteload_ema_alpha × site_load_smooth_{t-1}
+    + (1 - siteload_ema_alpha) × site_load_raw_t
+```
+
+默认：
+
+```text
+siteload_ema_alpha = 0.3
+```
+
+说明：EV 或 AC 负荷启停时，原始 `site_load_raw` 可能 1 秒内跳变很大。先做 EMA 平滑，可以避免 `H_t` 和 BESS target 跟着高频抖动。L1 保护仍然读取真实硬件状态，EMA 只用于 L2 经济调度。
+
+### 5.2 电网可用功率（v0.1 已有，公式微调）
+
+```text
+H_t = max(0, (MIC_t - site_load_smooth_t) × (1 - margin_t))
 ```
 
 这里 `margin_t` 是比例，和 Ning draft 02 对齐。
@@ -228,12 +277,12 @@ H_t = max(0, (MIC_t - site_load_t) × (1 - margin_t))
 如果现场系统提供的是 kW 安全余量，则替代写法是：
 
 ```text
-H_t = max(0, MIC_t - MIC_margin_kw_t - site_load_t)
+H_t = max(0, MIC_t - MIC_margin_kw_t - site_load_smooth_t)
 ```
 
 两种写法二选一，不要混用。
 
-### 5.2 EV 缺口（v0.1 已有，作用变了）
+### 5.3 EV 缺口（v0.1 已有，作用变了）
 
 ```text
 EV_gap_t = max(0, EV_request_t - H_t)
@@ -241,7 +290,7 @@ EV_gap_t = max(0, EV_request_t - H_t)
 
 v0.1 里 `EV_gap` 直接等于 BESS 放电量。v0.2 里 `EV_gap` 只参与 `α_dis` 的物理上限。
 
-### 5.3 物理上限 α（v0.2 拆成充和放两个）
+### 5.4 物理上限 α（v0.2 拆成充和放两个）
 
 ```text
 decision_period_h = delta_t_seconds / 3600
@@ -275,7 +324,7 @@ soc_dis_power_headroom_kw = soc_dis_energy_headroom_kwh / decision_period_h
 
 如果 BMS / PCS / 保护异常，对应的 α 直接置 0。若 BMS/PCS 已直接提供 `SOC_charge_limit_kw` / `SOC_discharge_limit_kw`，可直接替代上面的 SOC headroom 换算，避免重复计算。
 
-### 5.4 SOC band 判定（v0.2 新增）
+### 5.5 SOC band 判定（v0.2 新增）
 
 ```text
 if   SOC < soc_p10:                 band = 0   very_low
@@ -286,7 +335,7 @@ elif SOC < soc_p90:                 band = 4   high
 else:                               band = 5   very_high
 ```
 
-### 5.5 使用比例 u（v0.2 核心，仿 Ning draft 02）
+### 5.6 使用比例 u（v0.2 核心，仿 Ning draft 02）
 
 **充电侧**：
 
@@ -327,28 +376,54 @@ else:
 | 完全禁用价格调制（纯 SOC 跟踪）| 设 `g_chg = g_dis = 0` |
 | 完全不放电支援 EV | 设 `f1_dis = g_dis = 0` |
 
-### 5.6 候选功率
+### 5.7 候选功率
 
 ```text
 P_chg_cand_t = α_chg_t × u_chg_t
 P_dis_cand_t = α_dis_t × u_dis_t
 ```
 
-### 5.7 仲裁（充放互斥）
+### 5.8 仲裁（充放互斥 + 迟滞）
+
+先定义迟滞带：
+
+```text
+EPS_gap = ev_gap_hysteresis_kw
+```
+
+默认：
+
+```text
+EPS_gap = 2 kW
+```
+
+迟滞逻辑：
 
 ```text
 if band == 0:
     P_chg_t = P_chg_cand_t               band 0：在 EV 优先后的剩余 headroom 内尽量充
     P_dis_t = 0
-elif EV_gap_t > 0:
+elif EV_gap_t > EPS_gap:
     P_chg_t = 0                          有缺口优先放电支援
     P_dis_t = P_dis_cand_t
-else:
-    P_chg_t = P_chg_cand_t                没缺口才允许充电
+elif EV_request_t < H_t - EPS_gap:
+    P_chg_t = P_chg_cand_t                明确无缺口，才允许充电
     P_dis_t = 0
+else:
+    if prev_bess_direction == charge:
+        P_chg_t = min(P_chg_cand_t, α_chg_t)
+        P_dis_t = 0
+    elif prev_bess_direction == discharge:
+        P_chg_t = 0
+        P_dis_t = min(P_dis_cand_t, α_dis_t)
+    else:
+        P_chg_t = 0
+        P_dis_t = 0
 ```
 
-### 5.8 BESS 目标功率（signed）
+说明：`EV_gap` 在 0 附近抖动时，不立即在充电和放电之间切换，而是在迟滞带内维持上一周期方向或保持不动，减少 PCS 来回切换。
+
+### 5.9 BESS 目标功率（signed）
 
 ```text
 p_bess_raw_t = P_chg_t - P_dis_t                                 正充负放
@@ -375,7 +450,7 @@ p_bess_target_kw_t = clip(
 )                                                                SOC 硬限后再次过物理上限
 ```
 
-### 5.9 EV pool 限额
+### 5.10 EV pool 限额
 
 ```text
 p_bess_charge_cmd_kw_t = max(p_bess_target_kw_t, 0)
@@ -443,7 +518,7 @@ M1 v0.2 本地算法每 `delta_t` 秒运行一次。
 
 2. **算使用比例**：SOC 落在哪个 band（一共 6 档），就用哪一档的 `f1 + g × 价格项` 算出一个 0~1 之间的 `u`。`u = 0` 意味着这个方向完全不动；`u = 1` 意味着用满物理上限。价格便宜（充电）或价差好（放电）会把 `u` 推高，反之拉低。SOC 极低时在可用 headroom 内尽量充，SOC 极高且 EV 有缺口时在 EV 缺口内尽量放。
 
-3. **仲裁 + 安全收尾**：充电和放电不能同时进行。有 EV 缺口优先放电；没缺口且电便宜才充电；band 0 默认不抢 EV 功率，只在 EV 优先后的剩余 headroom 内尽量充。最后过速率限制和 SOC 硬上下限。
+3. **仲裁 + 安全收尾**：充电和放电不能同时进行。有 EV 缺口且超过迟滞带时优先放电；明确无缺口且电便宜才充电；迟滞带内维持上一周期方向，避免充放电来回跳。band 0 默认不抢 EV 功率，只在 EV 优先后的剩余 headroom 内尽量充。最后过速率限制和 SOC 硬上下限。
 
 **核心思想**：v0.1 是"够不够"的二元判断，v0.2 是"该用多少 × 物理能用多少"的乘法判断。价格信号只能调节利用率，不能凭空增加 kW。
 
@@ -460,6 +535,7 @@ M1 v0.2 本地算法每 `delta_t` 秒运行一次。
 | 决策结构 | if/else 二叉树 | 物理上限 × 使用比例 |
 | 充电触发 | EV 无缺口 + SOC < p25 | band 1~4 都可能（按 buy_rank）|
 | 放电触发 | EV 有缺口 + SOC ≥ p25 | band 2~5 都可能（按 spread_rank）|
+| 抖动控制 | 无 | site_load EMA + EV_gap hysteresis |
 | 破 MIC 风险 | 中（需 if 过滤）| L2 候选功率先被 cap；最终仍由 L1 硬保护兜底 |
 | 云端可调旋钮 | 无 | `f1`, `g`, `margin`, `slew_kw`, `beta_max` |
 | 输出契约 | mode + p_ev + p_bess + reason | 完全一致 |
@@ -498,11 +574,11 @@ band >= 5: u = 0 (不充)        band ≤ 1: u = 0 (禁放)
 
 2. **band 1 是否允许放电**：当前 v0.2 设 band ≤ 1 时 `u_dis = 0`（保守禁放）。是否允许 band 1 在 `spread_rank > 0.8` 时小量放电？
 
-3. **band 0 极低 SOC 是否抢 EV 的电**：当前 v0.2 默认 EV 优先，band 0 只使用 `H_t - EV_request_t` 之后的剩余 headroom。如果 SOC 极低时需要保护电池，是否应该允许压低 EV limit 来给 BESS 充电？
+3. **band 0 极低 SOC 的产品语义**：当前 v0.2 默认 EV 优先，band 0 只使用 `H_t - EV_request_t` 之后的剩余 headroom。这等于选择“先救客户充电体验，再救电池 SOC”。后果是：如果 SOC < p10 且 EV 持续满载，BESS 可能充不上电，直到触发 SOC_min / L1 保护。Ning 需要确认是否接受这个语义，还是允许极低 SOC 时压低 EV limit 给 BESS 充电。
 
 4. **`margin` 是 kW 还是比例**：v0.2 主公式使用比例 `margin`，以对齐 Ning manifest。如果 IT 现有系统只能提供 `MIC_margin_kw`，是否改成 kW reserve 版本？
 
-5. **充放电切换的迟滞**：当前 v0.2 没有 hysteresis。如果在 `EV_gap` 反复跨过 0 的边界，BESS 会频繁充放切换。是否需要加迟滞带（如 `EV_gap > 1 kW` 才切到放电）？
+5. **迟滞默认值**：当前 v0.2 默认 `ev_gap_hysteresis_kw = 2 kW`，`siteload_ema_alpha = 0.3`。Ning / IT 是否接受这两个默认值，还是希望由云端 manifest 调参？
 
 6. **价格原因是否进入控制枚举**：当前建议 `PRICE_LOW_OPPORTUNITY / PRICE_HIGH_HOLD` 放 telemetry，不放 `Y_t.reason_code`。Ning / IT 是否希望它们成为正式 reason_code？
 
@@ -521,5 +597,7 @@ band >= 5: u = 0 (不充)        band ≤ 1: u = 0 (禁放)
    - MIC 紧张
    - BESS 不可用
    - data stale
+   - EV_gap 在 0 附近抖动
+   - site_load_raw 阶跃跳变
    - manifest 过期 (回退到默认 `f1` / `g`)
-4. 给 IT 出 `m1-data-requirements-for-jin-v0.2.md`，把价格 rank、delta_t、battery_capacity、manifest fallback 字段补进字段表。
+4. 给 IT 出 `m1-data-requirements-for-jin-v0.2.md`，把价格 rank、delta_t、battery_capacity、site_load_smooth / EMA、hysteresis、manifest fallback 字段补进字段表。

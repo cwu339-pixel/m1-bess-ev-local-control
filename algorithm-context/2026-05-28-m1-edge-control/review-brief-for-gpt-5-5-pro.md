@@ -50,10 +50,10 @@ Keep this output unless there is a strong reason to change it:
 
 ```python
 Y_t = {
-    "mode": "NORMAL / BESS_SUPPORT / EV_LIMIT / BESS_CHARGE / SAFE_PROTECT",
+    "mode": "NORMAL / EV_LIMIT / BESS_CHARGE / SAFE_PROTECT",
     "p_ev_limit_kw": 0.0,
     "p_bess_target_kw": 0.0,
-    "reason_code": "NORMAL / EV_DEMAND_HIGH / MIC_LIMIT / SOC_LOW / PCS_LIMIT / BESS_FAULT / DATA_STALE",
+    "reason_code": "NORMAL / MIC_LIMIT / SOC_LOW / PCS_LIMIT / BESS_FAULT / DATA_STALE",
 }
 ```
 
@@ -62,7 +62,7 @@ Interpretation:
 ```text
 p_ev_limit_kw maps to site-level P_gun_pool_max.
 p_bess_target_kw > 0 means charge.
-p_bess_target_kw < 0 is reserved for event-driven discharge support.
+p_bess_target_kw < 0 is not emitted in Model 1.
 p_bess_target_kw = 0 means idle.
 ```
 
@@ -91,16 +91,16 @@ Do not use:
 physical_cap + price_bonus_kw
 ```
 
-3. **v0.3 is charge-side scheduling first.**
+3. **v0.3 is charge-side scheduling only.**
 
-Discharge support is a future/event-driven placeholder:
+Model 1 does not implement BESS discharge:
 
 ```text
-discharge_ratio_by_band = future parameter
-p_bess_discharge_event_kw = not implemented unless separately enabled
+p_bess_target_kw >= 0
+No discharge mode is active in Model 1
 ```
 
-Do not treat the discharge placeholder as a required v0.3 implementation.
+Do not add a discharge placeholder back into Model 1.
 
 4. **Site-load口径 is a critical risk.**
 
@@ -133,5 +133,5 @@ Please provide:
 - Do not solve per-gun allocation.
 - Do not introduce export price or V2G.
 - Do not require raw tariff tables on the edge.
-- Do not require IT to implement event-driven discharge in this v0.3 unless you explicitly argue why it is unavoidable.
+- Do not require IT to implement event-driven discharge in Model 1.
 - Do not change the output contract unless necessary.

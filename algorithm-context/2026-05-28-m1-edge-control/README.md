@@ -51,9 +51,9 @@ Interpretation:
 
 | Field | Meaning |
 |---|---|
-| `mode` | `NORMAL / BESS_SUPPORT / EV_LIMIT / BESS_CHARGE / SAFE_PROTECT` |
+| `mode` | `NORMAL / EV_LIMIT / BESS_CHARGE / SAFE_PROTECT` |
 | `p_ev_limit_kw` | Site-level EV pool max power, maps to `P_gun_pool_max` |
-| `p_bess_target_kw` | Positive = charge, negative = discharge, zero = idle |
+| `p_bess_target_kw` | Model 1 only: positive = charge, zero = idle; negative is not emitted |
 | `reason_code` | Main reason for the decision |
 
 ## Important Shift After 2026-05-28 Meeting
@@ -96,6 +96,14 @@ Ning's feedback:
 | `source-notes/ning-edge-control-strategy-summary.md` | Summary of what can and cannot be reused from Ning's draft. |
 | `source-notes/control-logic-v0.3-ppt-extracted.md` | Extracted text from the earlier control-logic PPT. |
 
+Important:
+
+```text
+Older v0.1 / v0.2 drafts may mention BESS discharge, BESS_SUPPORT, or signed negative p_bess_target_kw.
+Those are historical context only.
+Current Model 1 v0.3 does not implement BESS discharge.
+```
+
 ## Current Open Questions
 
 Price ranking has now been integrated into the regenerated v0.3 formula through:
@@ -111,7 +119,7 @@ The remaining questions are:
 - What default mic_margin_ratio should be used?
 - Can cloud output soc_p10/p25/p50/p75/p90 directly?
 - What initial base_charge_ratio_by_soc_band and cheap_price_bonus_ratio_by_soc_band should be used?
-- Should EV event-driven BESS discharge be enabled in Model 1, and if yes, what discharge_ratio_by_band should apply?
+- Does IT accept the Model 1 convention that `p_bess_target_kw >= 0`?
 ```
 
 M1 currently excludes:

@@ -16,9 +16,9 @@
 
 ```text
 云端告诉本地：今天 SOC 应该怎么看、现在电价算便宜还是贵、参数怎么调。
-安全层告诉本地：现在能不能动、最多能充/放多少。
+安全层告诉本地：现在能不能动、最多能充多少。
 本地算法每秒看一次现场，然后输出 EV 最多能拿多少电、BESS 主动充多少电。
-放电支援先作为事件驱动能力预留，不在这版做完整经济调度。
+Model 1 里完全不做 BESS 放电。
 ```
 
 ---
@@ -271,16 +271,15 @@ price_bonus = 0.4。
 ```text
 p_bess_target_kw 是我们给 BESS/PCS 的目标功率。
 正数表示充电。
-负数表示放电。
 0 表示不动。
+Model 1 不输出负数。
 ```
 
 Model 1 当前口径：
 
 ```text
 充电侧公式先讲清楚。
-负数放电先预留给 EV 事件驱动支援，具体比例后续定。
-如果没有单独启用事件驱动放电，这版默认不输出负数。
+放电不在 Model 1 里做。
 ```
 
 ### 4.13 SAFE_PROTECT
@@ -396,15 +395,14 @@ BESS 主动充电只使用 EV 之后剩下的 headroom。
 价格只能改变比例，不能创造额外功率。
 ```
 
-### Q6：放电为什么没有完整公式？
+### Q6：放电为什么完全不写？
 
 答：
 
 ```text
-18:00 讨论后，Model 1 先不把放电做成完整经济调度。
-EV 到来后的 BESS 支援先作为事件驱动聚合动作。
-后面可以按 SOC band 定一个放电比例表。
-所以这版给的是 future placeholder，不要求 IT 现在实现。
+因为这次 Model 1 的范围就是本地充电侧调度。
+放电不是 Model 1 的交付内容。
+所以文档里不再放 discharge 公式，也不要求 IT 实现任何放电模式。
 ```
 
 ### Q7：每把枪怎么分？
@@ -456,7 +454,7 @@ L2 算完以后，L1 / EMS 还要对最终 target 做 clamp 或 reject。
 | “本地算电价” | 本地不算原始电价，云端给 price rank |
 | “SOC band 是当前 SOC 的概率” | 当前 SOC 是确定值；band 是云端给的一组区间阈值 |
 | “L1 通过以后才运行 L2” | L1/L2 并行，L1 持续限制 L2 |
-| “放电也按同样价格公式做” | v0.3 不做完整放电经济调度，先事件驱动 |
+| “放电也按同样价格公式做” | Model 1 完全不做放电 |
 | “p_ev_limit_kw 是每把枪功率” | 这是 EV pool 总上限，不是单枪分配 |
 | “margin 是收益 margin” | 这是 MIC 安全余量 |
 | “site_base_load 已经包含 EV 也没关系” | 不行，这会让 EV 被扣两次 |
@@ -465,4 +463,4 @@ L2 算完以后，L1 / EMS 还要对最终 target 做 clamp 或 reject。
 
 ## 8. 你可以直接念的版本
 
-> 这版 v0.3 是把 Model 1 收窄成 BESS + EV、Import Only 的本地充电侧调度。云端 L3 给 model、SOC band、价格 rank 和参数；本地 L1 给安全状态和功率上限，并在最终执行前限幅；L2 每秒在这些边界里算两个核心输出：EV pool 的总功率上限 `p_ev_limit_kw`，以及 BESS 的目标功率 `p_bess_target_kw`。公式上先算 MIC 扣掉 site base load 和 margin 后的电网余量，也可以直接使用 IT 给的 `site_import_headroom_kw`；再按 EV 优先算 BESS 可主动充电上限；最后用 SOC band 和买电 price rank 决定这个上限使用多少比例。这样价格只影响比例，不会突破 MIC、BMS、PCS 的硬限制。放电这版先不做完整经济调度，只预留 EV 事件驱动支援的接口，后续再按 SOC band 定比例。
+> 这版 v0.3 是把 Model 1 收窄成 BESS + EV、Import Only 的本地充电侧调度。云端 L3 给 model、SOC band、价格 rank 和参数；本地 L1 给安全状态和功率上限，并在最终执行前限幅；L2 每秒在这些边界里算两个核心输出：EV pool 的总功率上限 `p_ev_limit_kw`，以及 BESS 的目标功率 `p_bess_target_kw`。公式上先算 MIC 扣掉 site base load 和 margin 后的电网余量，也可以直接使用 IT 给的 `site_import_headroom_kw`；再按 EV 优先算 BESS 可主动充电上限；最后用 SOC band 和买电 price rank 决定这个上限使用多少比例。这样价格只影响比例，不会突破 MIC、BMS、PCS 的硬限制。Model 1 完全不做 BESS 放电，`p_bess_target_kw` 只会是正数或 0。

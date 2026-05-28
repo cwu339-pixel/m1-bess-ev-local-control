@@ -32,7 +32,7 @@ Ning draft 02 的“物理上限 × 使用比例”已经被吸收进来。
 ```text
 site_load 口径不清，会导致 EV 被重复扣减。
 L1 是否只做前置 gate 没说清。
-放电 placeholder 容易被 IT 误解成现在就要实现。
+放电 placeholder 容易被 IT 误解成现在就要实现，所以已经从 Model 1 删除。
 部分变量名太像 AI / 数学稿，不适合会议口头解释。
 ```
 
@@ -47,8 +47,8 @@ L1 是否只做前置 gate 没说清。
 | 公式里的 `grid_headroom_kw` 太抽象 | 主公式改用 `site_import_headroom_kw` |
 | `base_charge_ratio_by_band` / `price_charge_ratio_by_band` 不够清楚 | 改成 `base_charge_ratio_by_soc_band` / `cheap_price_bonus_ratio_by_soc_band` |
 | L3 参数缺少有效期 | 增加 `parameter_version` 和 `valid_from / valid_to` |
-| 放电公式容易被误解为本版交付 | 明确写成 `future parameter`、`not implemented unless separately enabled` |
-| mode 优先级不明确 | 增加 `SAFE_PROTECT > EV_LIMIT > BESS_SUPPORT > BESS_CHARGE > NORMAL` |
+| 放电公式容易被误解为本版交付 | 从 Model 1 主文档删除，明确 Model 1 不输出放电 |
+| mode 优先级不明确 | 改成 `SAFE_PROTECT > EV_LIMIT > BESS_CHARGE > NORMAL` |
 | 用户需要能解释 | 新增 `2026-05-28-m1-model1-explainer-v0.3.md` 解说版 |
 
 ---
@@ -63,8 +63,7 @@ L1 是否只做前置 gate 没说清。
 | `mic_margin_ratio` 默认值 | 这是 MIC 安全余量，不应由算法文档随便定死 |
 | SOC band 是否由云端模型直接输出 | 目标接口按 `soc_p10/p25/p50/p75/p90` 设计 |
 | `base_charge_ratio_by_soc_band` / `cheap_price_bonus_ratio_by_soc_band` 初始值 | 这是 Ning / 云端调参项，不应由 L2 自己拍脑袋 |
-| EV 事件驱动放电比例 | 本版只预留接口，后续可定义 `discharge_ratio_by_band` |
-| IT 最终消费 signed target 还是拆分充/放电字段 | 当前主输出用 signed `p_bess_target_kw` |
+| IT 最终是否接受 `p_bess_target_kw >= 0` | Model 1 只输出充电或不动，不输出负数 |
 
 ---
 
@@ -72,7 +71,7 @@ L1 是否只做前置 gate 没说清。
 
 可以这样说：
 
-> Model 1 v0.3 先定义 Import Only、BESS + EV 场景下的本地充电侧调度：L3 下发模型参数和价格/SOC 指导，L1 提供硬保护边界并最终限幅，L2 在这些边界内计算 EV pool limit 和 BESS 充电目标；放电支援 EV 先作为事件驱动能力预留，不进入本版经济调度公式。
+> Model 1 v0.3 只定义 Import Only、BESS + EV 场景下的本地充电侧调度：L3 下发模型参数和价格/SOC 指导，L1 提供硬保护边界并最终限幅，L2 在这些边界内计算 EV pool limit 和 BESS 充电目标。Model 1 完全不实现 BESS 放电，`p_bess_target_kw` 只会是正数或 0。
 
 ---
 
@@ -94,4 +93,3 @@ L1 是否只做前置 gate 没说清。
 可以。
 只要 IT 提供 L3 参数、L1 安全边界、本地实时状态，就能用样例输入跑出 Y_t。
 ```
-

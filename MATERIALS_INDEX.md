@@ -18,6 +18,7 @@ This repository collects both the current M1 handoff and the supporting material
 | File | Purpose |
 |---|---|
 | `algorithm-context/2026-05-28-m1-edge-control/meeting-summary-2026-05-28.md` | Meeting summary and latest decision boundary |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-local-algorithm-brief-v0.2.md` | Latest reviewed M1 local algorithm draft with price ranks and physical-cap fixes |
 | `algorithm-context/2026-05-28-m1-edge-control/m1-local-algorithm-brief-v0.1.md` | Current local-algorithm explanation with formulas and flow |
 | `algorithm-context/2026-05-28-m1-edge-control/m1-formula-algorithm-v0.1.md` | Formula-focused draft before price-ranking integration |
 | `algorithm-context/2026-05-28-m1-edge-control/m1-x-fx-y-deliverable-v0.1.md` | x -> f(x) -> y handoff draft |

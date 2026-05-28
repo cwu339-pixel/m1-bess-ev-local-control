@@ -80,6 +80,7 @@ Ning's feedback:
 |---|---|
 | `review-brief-for-gpt-5-5-pro.md` | Start here. Contains the review task and current open questions. |
 | `meeting-summary-2026-05-28.md` | Plain-language meeting summary and latest decisions. |
+| `m1-local-algorithm-brief-v0.2.md` | Latest reviewed M1 formula draft with SOC bands, price ranks, physical caps, and post-slew EV limit. |
 | `m1-local-algorithm-brief-v0.1.md` | Current simple local-algorithm explanation with formulas and flow. |
 | `m1-x-fx-y-deliverable-v0.1.md` | Earlier x -> f(x) -> y handoff draft. |
 | `m1-formula-algorithm-v0.1.md` | Formula-focused draft before price-ranking integration. |

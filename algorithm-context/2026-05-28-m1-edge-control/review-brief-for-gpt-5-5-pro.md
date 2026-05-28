@@ -6,6 +6,14 @@ Please review the M1 local-control algorithm context and propose a cleaner v0.2 
 
 Important: read `source-notes/ning-edge-control-strategy-draft-02.txt` and `source-notes/ning-edge-control-strategy-draft-02-update-note.md` before relying on draft 01. Ning indicated the earlier draft was wrong, and draft 02 changes the core price formula.
 
+Latest local draft to review:
+
+```text
+m1-local-algorithm-brief-v0.2.md
+```
+
+This draft has already incorporated two review passes on physical caps and algorithm interface. Please focus on remaining correctness and business-policy questions, not on v0.1.
+
 The formula must stay narrow and implementable:
 
 ```text
@@ -38,7 +46,7 @@ Notes:
 - `p_bess_target_kw < 0` means discharge.
 - `p_bess_target_kw = 0` means idle.
 
-## Current No-Price v0.1 Formula
+## Historical No-Price v0.1 Formula
 
 ```text
 P_grid_available = max(0, MIC - MIC_margin - site_load)

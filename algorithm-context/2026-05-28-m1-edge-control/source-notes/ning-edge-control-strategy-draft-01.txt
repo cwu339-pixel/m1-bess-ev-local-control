@@ -1,0 +1,405 @@
+# 边缘控制策略 — 规格说明
+
+状态：DRAFT
+作者：Ning（与 Coco 协作）
+仓库：Forecasting-Scheduling @ main
+依赖：
+  - [forecast-evaluation-metrics.md](forecast-evaluation-metrics.md) — 提供 p10/p25/p50/p75 SoC 概率带
+  - [model-selector-agent.md](model-selector-agent.md) — 提供 manifest 发布机制
+  - [optimiser-probabilistic-integration.md](optimiser-probabilistic-integration.md) — 提供上游 LP 推导参数
+
+---
+
+## 目的
+
+为 BTM 储能站点设计**极简的边缘充电控制器**。边缘每个 tick 只做一件事：
+"现在应该从电网向电池充多少 kW"。所有"思考"（预测、优化、价格套利）都
+留在云端，被**折叠成一组参数**通过 manifest 推送给边缘。边缘只需运行
+**一条算术公式**就能决定充电功率。
+
+**范围限定为仅充电**：放电视为被动 —— 当负荷 > 光伏时电池自动放电服务
+负荷，控制器不做放电决策。
+
+## 设计原则
+
+1. **边缘 = 加减乘除**。只用 `+ − × ÷`、`min/max` 和比较。除了 band 分类外
+   没有 if-chain，没有状态机，没有 optimizer。
+2. **云端思考，边缘执行**。所有需要推理的参数（价格、预测、计划）都在
+   云端预先算好后下放。
+3. **每个参数都有安全的本地默认值**。manifest 过期或缺失时，边缘用最后
+   已知的良好配置继续运行。
+4. **安全层独立**。SoC 硬限和电网余量保护**永远凌驾于策略层之上**，反之
+   不行。
+
+---
+
+## 架构
+
+```
+┌──── 云端（每 30 分钟）────────────┐    ┌──── 边缘（每 30 秒）─────┐
+│                                     │    │                           │
+│  LP / 概率预测                       │    │  读取站点负荷电表        │
+│         │                           │    │  读取电池 SoC             │
+│         ▼                           │    │         │                 │
+│  推导 per-band 参数：                │    │         ▼                 │
+│    soc_p10/p25/p50/p75[t]           │ ──►│  应用公式 (1)             │
+│    price_rank[t]                    │    │         │                 │
+│    f1[band], beta_max[band]         │    │         ▼                 │
+│    margin                           │    │  应用 slew + 硬限         │
+│         │                           │    │         │                 │
+│         ▼                           │    │         ▼                 │
+│   发布 manifest.json                │    │  设定 charge_kw 给 BMS    │
+│                                     │    │                           │
+└─────────────────────────────────────┘    └───────────────────────────┘
+```
+
+---
+
+## 公式（全部控制逻辑）
+
+```
+α      = max( 0, ( MiC − siteload_smooth ) × ( 1 − margin ) )
+
+if α ≤ 0:                       charge_kw = 0
+elif soc < soc_p10[t]:          charge_kw = α × 1.0       + β_max[0]                              # band 0 紧急充
+elif soc < soc_p25[t]:          charge_kw = α × f1[1]     + β_max[1] × ( 1 − price_rank[t] )      # band 1 偏低
+elif soc < soc_p50[t]:          charge_kw = α × f1[2]     + β_max[2] × ( 1 − price_rank[t] )      # band 2 略低
+elif soc < soc_p75[t]:          charge_kw = α × f1[3]     + β_max[3] × ( 1 − price_rank[t] )      # band 3 略高
+else:                           charge_kw = 0                                                      # band 4 不充
+                                                                                                   #         （公式 1）
+
+charge_kw = clip( charge_kw, prev_charge_kw − slew_kw, prev_charge_kw + slew_kw )                 # 速率限制
+charge_kw = min( charge_kw, β_max_global )                                                         # 绝对上限
+if soc ≥ hard_soc_ceiling_pct:  charge_kw = 0                                                      # 安全覆盖
+```
+
+**公式由两项组成：**
+
+| 项 | 含义 |
+|---|---|
+| `α × f1[band]` | "**余量项**" —— 机会性利用未占用的 MiC，与价格无关。`f1` 越大，越激进地占用电网余量。 |
+| `β_max[band] × (1 − price_rank[t])` | "**价格奖励项**" —— 价格便宜时额外充。价格处在当日峰值时为 0。上限是 `β_max[band]`。 |
+
+**Band 0（紧急充）**不带价格调制：始终用满 `β_max[0]` 加上满 headroom ——
+**安全优于价格**。
+
+**Band 4（不充）**输出 0 —— SoC 已经在 p75 以上，让负荷自然消耗电池即可。
+
+---
+
+## 参数分类
+
+每个参数都属于以下三组之一：
+
+### 组 A — 站点固定参数（硬件常量）
+
+每个站点装机时设定一次，永不变化。存放在设备本地的 `edge_config.yaml`。
+
+| 参数 | 单位 | 备注 |
+|---|---|---|
+| `MiC` | kW | 最大进口容量（电网连接限制）|
+| `battery_capacity_kwh` | kWh | 电池铭牌容量 |
+| `inverter_max_kw` | kW | 逆变器额定（常常才是真正瓶颈）|
+| `site_id` | string | 用于 manifest 匹配 |
+
+### 组 B — 云端可调参数（manifest 推送，边缘有 fallback 默认值）
+
+这些是**云端调整边缘行为的旋钮**。边缘存最后已知的良好值；manifest 过期
+时用 fallback。
+
+| 参数 | 单位 | 默认值 | 云端推送形式 | 控制什么 |
+|---|---|---|---|---|
+| `margin` | 比例 | 0.10 | 标量 | MiC 安全余量（保留 10% 不动）|
+| `f1[band]` | 比例 | `[1.0, 0.8, 0.5, 0.2]`（band 0–3）| 标量 **或** 时间序列（48 × 4）| 各 band 占用 MiC headroom 的激进程度 |
+| `beta_max[band]` | kW | `[0.5C, 0.4C, 0.3C, 0.2C] × battery_capacity` | 标量 **或** 时间序列（48 × 4）| 各 band 价格奖励充电的上限 |
+| `beta_max_global` | kW | `0.5C × battery_capacity` | 标量 | 绝对充电上限（电池寿命限制）|
+| `slew_kw` | kW/step | `0.05C × battery_capacity` | 标量 | 每 tick 充电功率最大变化量 |
+| `siteload_ema_alpha` | 比例 | 0.3 | 标量 | siteload 读数平滑系数 |
+
+**唯一的价格灵敏度旋钮**：云端通过调整 **`beta_max[band]` 的形状**控制
+价格驱动充电的激进度。`beta_max[1]` 和 `beta_max[2]` 越大 → catchup band
+价格驱动越激进。这是运营人员想"更多套利"或"更少套利"时唯一要动的旋钮。
+
+### 组 C — 云端推导参数（manifest 推送，按时间索引）
+
+云端每 30 分钟由 LP + 概率预测计算。
+
+| 参数 | 单位 | 形状 | 来源 |
+|---|---|---|---|
+| `soc_p10[t]`, `soc_p25[t]`, `soc_p50[t]`, `soc_p75[t]` | % | 各 48 个 | 概率 SoC 预测（来自 optimiser × probabilistic spec）|
+| `price_rank[t]` | 0–1 | 48 个 | `(price[t] − min) / (max − min)`，在 manifest 价格窗口内 |
+| `valid_from`, `valid_until` | ISO 时间戳 | 标量 | manifest 有效窗口 |
+
+### 组 D — 实时输入（传感器）
+
+边缘每 tick 读取，云端永远不推送。
+
+| 输入 | 单位 | 来源 |
+|---|---|---|
+| `soc` | % | BMS |
+| `siteload_raw` | kW | 站点电表 |
+| `prev_charge_kw` | kW | 上个 tick 的设定值（边缘内存维护）|
+
+---
+
+## Manifest schema
+
+```json
+{
+  "schema_version": "1.0",
+  "site_id": "park-royal",
+  "valid_from":  "2026-05-28T00:00:00Z",
+  "valid_until": "2026-05-29T00:00:00Z",
+  "published_at":"2026-05-28T06:00:00Z",
+
+  "datetimes": ["2026-05-28T00:00", "2026-05-28T00:30", "..."],
+
+  "soc_p10":    [40, 41, ...],
+  "soc_p25":    [48, 49, ...],
+  "soc_p50":    [55, 56, ...],
+  "soc_p75":    [62, 63, ...],
+  "price_rank": [0.7, 0.6, ...],
+
+  "params": {
+    "margin":             0.10,
+    "f1":                 [1.0, 0.8, 0.5, 0.2],
+    "beta_max_kw":        [50, 40, 30, 20],
+    "beta_max_global_kw": 50,
+    "slew_kw":            5,
+    "siteload_ema_alpha": 0.3
+  }
+}
+```
+
+**为什么 `params` 单独成对象**：保持云端调参面清晰 —— 运营要"调策略"
+只需要碰 `params.*`。时间序列字段是计算输出，不属于调参面。
+
+**时变覆盖**：`params` 里任何标量都可以替换成 48 长度数组 —— 边缘会按
+HH 索引取对应值。这让云端可以按时段塑形策略（比如夜间用更大的 `slew_kw`、
+峰时用更小）。
+
+---
+
+## 边缘本地配置（`edge_config.yaml`）
+
+```yaml
+# 组 A — 硬件固定
+site_id:               park-royal
+mic_kw:                100
+battery_capacity_kwh:  100
+inverter_max_kw:       50
+
+# 决策周期
+decision_period_s:     30
+
+# 安全层（组 B 中不可云端调整的安全值）
+hard_soc_ceiling_pct:  95
+hard_soc_floor_pct:     5
+
+# 组 B 默认值 — manifest 缺失或过期时使用
+defaults:
+  margin:              0.10
+  f1:                  [1.0, 0.8, 0.5, 0.2]
+  beta_max_kw:         [50, 40, 30, 20]
+  beta_max_global_kw:  50
+  slew_kw:             5
+  siteload_ema_alpha:  0.3
+
+# 默认 SoC band（manifest 不可用 ≥ 24h 时使用）
+fallback_bands:
+  soc_p10: 30
+  soc_p25: 40
+  soc_p50: 50
+  soc_p75: 60
+  price_rank: 0.5    # 中性价格假设
+```
+
+---
+
+## 决策流程（每个 tick，每 30 秒）
+
+```
+1. 读取传感器：       soc, siteload_raw
+2. 更新平滑值：       siteload_smooth = α·siteload_smooth + (1−α)·siteload_raw
+3. 解析参数：         P = manifest.params 如果 manifest 新鲜，否则 config.defaults
+4. 解析 bands：       bands[t] = manifest[t] 如果新鲜，否则 config.fallback_bands
+5. 计算 α：           α = max(0, (MiC − siteload_smooth) × (1 − P.margin))
+6. 应用公式 (1)
+7. 应用 slew 限制
+8. 应用绝对上限      (P.beta_max_global_kw)
+9. 应用安全覆盖      (硬性 SoC 上限)
+10. 发送 charge_kw 设定值给 BMS/逆变器
+11. 心跳上报          (site_id, soc, charge_kw, manifest_version) → 云端
+```
+
+---
+
+## 安全层（独立于策略层）
+
+安全层在公式 (1) **之后**运行，**不可被 manifest 关闭**。实现为独立的
+硬编码函数：
+
+```python
+def safety_override(charge_kw, soc, alpha):
+    if soc >= hard_soc_ceiling_pct:  return 0          # 不过充
+    if alpha <= 0:                   return 0          # MiC 违反/触限
+    if charge_kw < 0:                return 0          # 不放电
+    return min(charge_kw, inverter_max_kw)             # 硬件上限
+```
+
+为什么硬编码（不接受 manifest 配置）：
+
+- 云端配置的 bug 不应能导致过充或破坏电网连接
+- 这是**唯一**可以不读 manifest 历史就能审计为"绝对安全"的一层
+
+---
+
+## 失联退化状态
+
+| Manifest 新鲜度 | 行为 |
+|---|---|
+| 新鲜（< `valid_until`）| 正常 — 使用 manifest |
+| 过期 0–24 h | 沿用最后 manifest 的时间序列，冻结 `params` 在最后良好值 |
+| 过期 ≥ 24 h | 使用 `fallback_bands` + `defaults` — 控制器仍在跑，无价格信号（rank = 0.5 → catchup band 中等强度充电）|
+| 从未收到 manifest | 同 ≥ 24 h |
+
+**所有状态下**安全层都保持激活。**边缘永不停机** —— 最坏情况是用最简单
+的合理策略 + 本地默认值继续运行。
+
+---
+
+## 计算示例
+
+100 kWh 电池，MiC = 100 kW。某 HH t：
+
+- `siteload_smooth = 30 kW` ⇒ α = (100 − 30) × 0.9 = **63 kW**
+- `soc_p10/p25/p50/p75 = 40 / 48 / 55 / 62 %`
+- `price_rank[t] = 0.2`（便宜）
+- `f1 = [1.0, 0.8, 0.5, 0.2]`, `β_max = [50, 40, 30, 20] kW`
+- `slew = 5 kW`, `prev_charge = 15 kW`
+
+| 实测 SoC | Band | 原始 `charge_kw` | 经 slew | 经安全层 |
+|---:|:---|---:|---:|---:|
+| 35 % | 0 紧急充 | 63·1.0 + 50 = 113 | 20 | 20（受逆变器上限 50 钳制）|
+| 45 % | 1 偏低 | 63·0.8 + 40·0.8 = 82.4 | 20 | 20 |
+| 50 % | 2 略低 | 63·0.5 + 30·0.8 = 55.5 | 20 | 20 |
+| 58 % | 3 略高 | 63·0.2 + 20·0.8 = 28.6 | 20 | 20 |
+| 65 % | 4 不充 | 0 | 10 | 10（slew 向下拉）|
+| 96 % | — | 任意 | 任意 | **0**（安全覆盖）|
+
+可以看到 slew 拉得很厉害，因为公式输出值远高于 `prev_charge_kw`。几个 tick
+之后 slew 窗口会追上目标。
+
+---
+
+## 云端如何调整行为（运营人员操作手册）
+
+| 运营想要的效果 | 改 manifest `params` 中的哪个 |
+|---|---|
+| 更激进的价格套利 | 增大 `beta_max_kw[1..3]` |
+| 更保守（减磨损 / 降低账单风险）| 减小 `beta_max_kw[1..3]` |
+| 给其他站点负荷留更多 MiC 余量 | 增大 `margin`（如 0.10 → 0.20）|
+| SoC 偏离时更快追回 | 把 `f1[1..3]` 调向 1.0 |
+| 更平滑的充电曲线（减少逆变器循环）| 减小 `slew_kw` |
+| 完全禁用价格调制 | 设 `beta_max_kw = [0, 0, 0, 0]`（只剩 headroom 项）|
+| 完全停止充电（如维护）| 设 `f1 = [0,0,0,0]` 且 `beta_max_kw = [0,0,0,0]` |
+| 按时段塑形策略（如夜间更温和）| 把 `beta_max_kw` 推成 48 长度数组而非标量 |
+
+**运营人员永不登录边缘设备**。所有调整都通过云端 manifest 发布。边缘下个
+tick 在 manifest 刷新后自动读取新参数。
+
+---
+
+## 涉及文件
+
+| 文件 | 改动 |
+|---|---|
+| `forecast_modules/edge/__init__.py` | 新建 — 包标记 |
+| `forecast_modules/edge/controller.py` | 新建 — 公式 (1) 实现 |
+| `forecast_modules/edge/safety.py` | 新建 — 硬编码安全覆盖 |
+| `forecast_modules/edge/manifest.py` | 新建 — manifest 解析 + 新鲜度检查 |
+| `forecast_modules/edge/config.py` | 新建 — `edge_config.yaml` 加载器 |
+| `forecast_modules/edge/runtime.py` | 新建 — 主决策循环 |
+| `forecast_modules/edge/heartbeat.py` | 新建 — 云端心跳客户端 |
+| `forecast_modules/agents/edge_deployer.py` | 扩展 — 按本 schema 发布 manifest |
+| `scripts/run_edge.py` | 新建 — 边缘 runtime CLI（开发/测试用）|
+| `tests/edge/*` | 新建 — 见测试计划 |
+| `docs/02-specs/edge-control-policy.md` | 本文档 |
+
+---
+
+## 测试计划
+
+### 单元 — 公式 (1) — `tests/edge/test_controller.py`
+- 每个 band 的公式对典型 SoC 输入产出与手算一致
+- `α = 0`（负荷 ≥ MiC）→ 所有 band 输出 `charge_kw = 0`
+- `price_rank = 1`（峰值）→ catchup band 的价格奖励项归零
+- `price_rank = 0`（便宜）→ catchup band 的价格奖励项满 β_max
+- 紧急 band 不受 `price_rank` 影响（rank=0 和 rank=1 输出相同）
+- Band 4（`soc ≥ soc_p75`）→ 无论其他参数如何，输出永远为 0
+
+### 单元 — 安全 — `tests/edge/test_safety.py`
+- `soc ≥ hard_soc_ceiling_pct` → 0，无视策略输出
+- 负的 `charge_kw` → 0（不放电）
+- `charge_kw > inverter_max_kw` → 钳到 `inverter_max_kw`
+
+### 单元 — slew — `tests/edge/test_slew.py`
+- 阶跃目标 → 输出每 tick 最多上升 `slew_kw`
+- 持续目标在 `(target − prev) / slew_kw` tick 内可达
+
+### 单元 — manifest 新鲜度 — `tests/edge/test_manifest.py`
+- 新鲜 manifest → 应用 manifest 参数
+- 过期 0–24 h → 时间序列保留，参数冻结在最后良好值
+- 过期 ≥ 24 h → 应用 `fallback_bands` 和 `defaults`
+- Manifest 格式错误 → 拒收，保留前一个，记录错误
+
+### 集成 — `tests/edge/test_runtime_loop.py`
+- 1 小时合成轨迹（120 个 tick）：站点负荷轨迹、SoC 轨迹、manifest 固件
+- 断言 charge_kw 序列与手推的期望序列在容差内一致
+
+### 性质 — `tests/edge/test_invariants.py`
+- 对任意 (soc, siteload, manifest) 输入：
+  `0 ≤ charge_kw ≤ min(MiC − siteload_smooth, inverter_max_kw, β_max_global)`
+- 输出不会让 siteload_smooth 降到 0 以下
+- 触及 `hard_soc_ceiling_pct` 后，只有 SoC 跌到上限 − 1% 以下才允许再充
+  （边界处不抖动）
+
+---
+
+## 验收标准
+
+1. `python scripts/run_edge.py --site park-royal --replay tests/edge/fixtures/day_2026-05-28.csv`
+   回放真实站点轨迹，产出的 charge_kw 时间序列与集成测试期望输出在浮点
+   容差内一致。
+
+2. 推送 `beta_max_kw = [0, 0, 0, 0]` 的 manifest，边缘在一个 tick 内停止
+   所有价格驱动充电，而 headroom 充电仍按 `f1` 控制。
+
+3. 切断 manifest 来源（模拟云端宕机）30 小时：
+   - 0–24 h：边缘继续用最后已知时间序列
+   - 24–30 h：边缘用 `fallback_bands` + `defaults`，charge_kw 始终在安全
+     限制内
+
+4. 边缘代码量 ≤ 200 行（不含测试和 config 加载器）。控制函数（公式 1
+   实现）≤ 30 行。
+
+5. manifest `params` 块的全部参数集合在本规格中文档化，新运营人员无需
+   读代码就能调整任何一个旋钮。
+
+---
+
+## 待解决问题
+
+- **Tick 周期（30 秒）vs manifest 周期（30 分钟）**：边缘应在 HH 边界
+  之间插值时间序列，还是保持最后值？本规格默认：保持最后值（更简单，
+  且符合半小时电力市场结构）。待确认。
+- **心跳 schema**：云端需要知道边缘哪些状态？最小有用集：
+  `(site_id, soc, charge_kw, manifest_version, last_manifest_at)`。
+  如有可观测性需要可扩展。
+- **MiC 测量**：假设直接从站点电表读取。如果 MiC 强制执行的电表与
+  `siteload` 电表不同，公式可能需要符号修正 —— 部署时按实际接线验证。
+- **多电池站点**：本规格假设每站点一块电池。N 块电池时，要么 (a) 每块
+  电池一个独立 manifest，要么 (b) 云端聚合后下放每块电池的设定值。
+  按需推迟实现。
+
+

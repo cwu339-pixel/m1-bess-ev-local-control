@@ -7,9 +7,32 @@ This repository collects both the current M1 handoff and the supporting material
 | File | Purpose |
 |---|---|
 | `README.md` | Repository entry point |
+| `algorithm-context/2026-05-28-m1-edge-control/README.md` | Latest algorithm context pack for the M1 edge-control review |
+| `algorithm-context/2026-05-28-m1-edge-control/review-brief-for-gpt-5-5-pro.md` | Review brief for improving the formula with SOC bands and price ranks |
 | `docs/m1-three-tables-for-alignment.md` | Short alignment version: problem definition, constraints, parameter list |
 | `docs/m1-local-control-interface-v0.1.md` | Main M1 local-control interface handoff |
 | `docs/m1-bottom-up-interface-plan.md` | Technical appendix for bottom-up interface and test plan |
+
+## Latest Algorithm Context
+
+| File | Purpose |
+|---|---|
+| `algorithm-context/2026-05-28-m1-edge-control/meeting-summary-2026-05-28.md` | Meeting summary and latest decision boundary |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-four-control-loops-v0.1.md` | Four-loop explanation: L1 protection, power aggregation, economic dispatch, gun/module allocation |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-model1-explainer-v0.3.md` | Plain-language v0.3 explanation and meeting Q&A |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-model1-local-algorithm-v0.3.md` | Latest regenerated Model 1 draft after expert review |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-model1-v0.3-expert-review.md` | Expert review summary and changes absorbed into v0.3 |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-local-algorithm-brief-v0.2.md` | Latest reviewed M1 local algorithm draft with price ranks and physical-cap fixes |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-local-algorithm-brief-v0.1.md` | Current local-algorithm explanation with formulas and flow |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-formula-algorithm-v0.1.md` | Formula-focused draft before price-ranking integration |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-x-fx-y-deliverable-v0.1.md` | x -> f(x) -> y handoff draft |
+| `algorithm-context/2026-05-28-m1-edge-control/m1-data-requirements-for-jin-v0.1.md` | IT / Jin data-requirement draft |
+| `algorithm-context/2026-05-28-m1-edge-control/notebooks/m1-mvp-local-algorithm-test.ipynb` | Runnable notebook for current no-price v0.1 formula |
+| `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-summary.md` | Summary of Ning's edge-control draft and how it maps to M1 |
+| `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-draft-02.txt` | Latest Ning edge-control draft; supersedes draft 01 for formula review |
+| `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-draft-02-update-note.md` | Short note on the draft 02 correction |
+| `algorithm-context/2026-05-28-m1-edge-control/source-notes/ning-edge-control-strategy-draft-01.txt` | Ning edge-control draft converted from docx |
+| `algorithm-context/2026-05-28-m1-edge-control/source-notes/control-logic-v0.3-ppt-extracted.md` | Extracted text from the control-logic PPT |
 
 ## Meeting Notes
 
